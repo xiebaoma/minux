@@ -37,6 +37,7 @@ make CROSS_COMPILE=riscv64-unknown-elf-
 |---|---|
 | `make` | 构建内核镜像 `build/minux.elf` |
 | `make run` | 在 QEMU 中启动（按 `Ctrl-A X` 退出） |
+| `make test` | 构建带启动自测的内核 `build/test/minux.elf` 并运行 |
 | `make debug` | 启动 QEMU 并在第一条指令前暂停，GDB 服务监听 `localhost:1234` |
 | `make dump` | 生成反汇编文件 `build/minux.asm` |
 | `make clean` | 清理构建产物 |
@@ -63,7 +64,10 @@ arch/riscv/            架构相关代码
   kernel.ld            链接脚本
   sbi.c                SBI 调用封装
   include/asm/         架构相关头文件
+include/minux/         内核通用头文件（types.h、string.h ...）
 init/                  通用初始化（start_kernel）
+lib/                   通用库函数（string.c）
+tests/                 内核自测，只在 `make test` 时编译进内核
 docs/                  设计文档与路线图
 ```
 

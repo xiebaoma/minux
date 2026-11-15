@@ -5,30 +5,49 @@ CC      := $(CROSS_COMPILE)gcc
 LD      := $(CROSS_COMPILE)ld
 OBJDUMP := $(CROSS_COMPILE)objdump
 
-BUILD   := build
-KERNEL  := $(BUILD)/minux.elf
 ARCH    := arch/riscv
 
+# TEST=1：把 tests/ 下的自测编进内核（`make test` 会自动设置）。
+# 测试版和正式版的目标文件放在不同目录，避免互相混用。
+TEST    ?= 0
+ifeq ($(TEST),1)
+BUILD   := build/test
+else
+BUILD   := build
+endif
+KERNEL  := $(BUILD)/minux.elf
+
 # 内核不使用浮点（rv64imac + lp64），与 Linux 一致
-CFLAGS  := -Wall -Wextra -O2 -g \
+# 固定 C 标准为 gnu11（与 Linux 相同）。GCC 15+ 默认 C23，
+# 那里 bool/true/false 是关键字，会与 types.h 的定义冲突。
+CFLAGS  := -std=gnu11 -Wall -Wextra -O2 -g \
            -march=rv64imac_zicsr_zifencei -mabi=lp64 -mcmodel=medany \
            -ffreestanding -fno-builtin -nostdlib \
            -fno-stack-protector -fno-pie -fno-omit-frame-pointer \
-           -I$(ARCH)/include -MMD -MP
+           -Iinclude -I$(ARCH)/include -MMD -MP
 LDFLAGS := -T $(ARCH)/kernel.ld -nostdlib
 
-SRCS := $(ARCH)/head.S \
-        $(ARCH)/sbi.c \
-        init/main.c
+# 自动收集这些目录下的源文件：新建 .c 文件后无需改 Makefile。
+# 链接顺序无所谓：_start 位于 .text.entry 段，链接脚本保证它排在最前。
+SRC_DIRS := $(ARCH) init lib kernel
+ifeq ($(TEST),1)
+SRC_DIRS += tests
+CFLAGS   += -DCONFIG_SELFTEST
+endif
+SRCS := $(foreach d,$(SRC_DIRS),$(wildcard $(d)/*.c $(d)/*.S))
 OBJS := $(patsubst %,$(BUILD)/%.o,$(basename $(SRCS)))
 
 QEMU      := qemu-system-riscv64
 QEMUFLAGS := -machine virt -nographic -bios default -m 128M -smp 1 \
              -kernel $(KERNEL)
 
-.PHONY: all run debug dump clean
+.PHONY: all run test debug dump clean
 
 all: $(KERNEL)
+
+# 构建带自测的内核（build/test/minux.elf）并在 QEMU 中运行
+test:
+	$(MAKE) TEST=1 run
 
 $(KERNEL): $(OBJS) $(ARCH)/kernel.ld
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)
