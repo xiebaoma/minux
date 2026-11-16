@@ -48,14 +48,6 @@ make CROSS_COMPILE=riscv64-unknown-elf-
 riscv64-elf-gdb build/minux.elf -ex 'target remote :1234'
 ```
 
-## 启动流程
-
-```
-QEMU virt ─> OpenSBI (M-mode, 0x80000000) ─> _start (S-mode, 0x80200000) ─> start_kernel()
-```
-
-OpenSBI 进入内核时，`a0` 中是 hartid，`a1` 中是设备树（DTB）的物理地址。
-
 ## 目录结构
 
 ```
@@ -75,7 +67,3 @@ docs/                  设计文档与路线图
 ## 路线图
 
 见 [docs/ROADMAP.md](docs/ROADMAP.md)。
-
-## 许可证
-
-待定。
