@@ -171,7 +171,7 @@ static void test_warn_on(void)
 	check(WARN_ON(calls++ == 1) == 0 && calls == 1,
 	      "WARN_ON: evaluates cond exactly once (false)");
 
-	test_puts("  (a WARNING line below is expected)\n");
+	test_puts("  (two WARNING lines below are expected)\n");
 	check(WARN_ON(calls++ == 1) == 1 && calls == 2,
 	      "WARN_ON: evaluates cond exactly once (true)");
 	check(WARN_ON(5) == 1, "WARN_ON(5) == 1");
