@@ -20,5 +20,6 @@ void test_puts(const char *s);
 /* ---- 测试套件 ---- */
 void test_string(void);
 void test_list(void);
+void test_printk(void);
 
 #endif /* _TESTS_TEST_H */

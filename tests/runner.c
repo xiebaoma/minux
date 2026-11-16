@@ -13,6 +13,7 @@ struct test_suite {
 static const struct test_suite suites[] = {
 	{ "string", test_string },
 	{ "list",   test_list },
+	{ "printk", test_printk },
 };
 
 static int failures;

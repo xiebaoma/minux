@@ -66,7 +66,8 @@ arch/riscv/            架构相关代码
   include/asm/         架构相关头文件
 include/minux/         内核通用头文件（types.h、string.h ...）
 init/                  通用初始化（start_kernel）
-lib/                   通用库函数（string.c）
+kernel/                核心子系统（printk、panic）
+lib/                   通用库函数（string、vsprintf）
 tests/                 内核自测，只在 `make test` 时编译进内核
 docs/                  设计文档与路线图
 ```
