@@ -1,6 +1,9 @@
+#include <asm/plic.h>
 #include <asm/sbi.h>
 #include <asm/timer.h>
 #include <asm/trap.h>
+#include <asm/uart.h>
+#include <asm/virt.h>
 #include <minux/fdt.h>
 #include <minux/limits.h>
 #include <minux/panic.h>
@@ -150,6 +153,7 @@ static void log_fdt_reservation(u64 address, u64 size)
 void start_kernel(unsigned long hartid, unsigned long dtb_pa)
 {
 	u32 dtb_size;
+	struct virt_irq_devices irq_devices;
 	unsigned long kernel_start = (unsigned long)_kernel_start;
 	unsigned long kernel_end = (unsigned long)_kernel_end;
 
@@ -184,6 +188,14 @@ void start_kernel(unsigned long hartid, unsigned long dtb_pa)
 
 	/* 只在 `make test` 构建时有效，普通构建下是空函数 */
 	run_selftests();
+
+	/* 从设备树定位 PLIC、UART，并在打开总中断前配置好它们。 */
+	virt_probe_irq_devices((const void *)dtb_pa, hartid, &irq_devices);
+	pr_info("PLIC: base=0x%lx, S context=%u; UART: base=0x%lx, IRQ=%u\n",
+		irq_devices.plic_base, irq_devices.plic_s_context,
+		irq_devices.uart_base, irq_devices.uart_irq);
+	plic_init(&irq_devices);
+	uart_init(&irq_devices);
 
 	pr_info("timer: %u Hz, timebase: %u Hz\n",
 		TIMER_HZ, timebase_frequency);

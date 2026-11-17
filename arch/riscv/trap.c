@@ -1,10 +1,13 @@
+#include <asm/plic.h>
 #include <asm/trap.h>
 #include <asm/timer.h>
+#include <asm/uart.h>
 #include <minux/panic.h>
 
 #define SCAUSE_INTERRUPT (1UL << (sizeof(unsigned long) * 8 - 1))
 #define SSTATUS_SIE      (1UL << 1)
 #define SCAUSE_TIMER     5
+#define SCAUSE_EXTERNAL  9
 
 extern void riscv_trap_entry(void);
 
@@ -26,6 +29,18 @@ void riscv_trap_handler(struct pt_regs *regs)
 
 	if ((regs->cause & SCAUSE_INTERRUPT) && code == SCAUSE_TIMER) {
 		timer_handle_interrupt();
+		return;
+	}
+	if ((regs->cause & SCAUSE_INTERRUPT) && code == SCAUSE_EXTERNAL) {
+		u32 irq;
+
+		/* PLIC 可能同时排队多个来源，逐个认领并完成。 */
+		while ((irq = plic_claim()) != 0) {
+			if (irq != uart_irq_number())
+				panic("unhandled PLIC IRQ: %u", irq);
+			uart_handle_interrupt();
+			plic_complete(irq);
+		}
 		return;
 	}
 
