@@ -1,4 +1,6 @@
 #include <asm/sbi.h>
+#include <asm/timer.h>
+#include <asm/trap.h>
 #include <minux/fdt.h>
 #include <minux/limits.h>
 #include <minux/panic.h>
@@ -17,7 +19,9 @@ static u32 reserved_address_cells;
 static u32 reserved_size_cells;
 static bool current_root_child_is_memory;
 static bool current_root_child_is_reserved;
+static bool current_root_child_is_cpus;
 static bool found_memory;
+static u32 timebase_frequency;
 static unsigned int fdt_reservation_count;
 static unsigned int reserved_region_count;
 
@@ -38,6 +42,7 @@ static void log_fdt_node(const char *name, unsigned int depth)
 			strncmp(name, "memory@", 7) == 0;
 		current_root_child_is_reserved =
 			strcmp(name, "reserved-memory") == 0;
+			current_root_child_is_cpus = strcmp(name, "cpus") == 0;
 		if (current_root_child_is_reserved) {
 			reserved_address_cells = root_address_cells;
 			reserved_size_cells = root_size_cells;
@@ -85,10 +90,17 @@ static unsigned int print_reg_ranges(const char *kind, const void *value,
 static void log_fdt_property(const char *name, const void *value,
 			     u32 len, unsigned int depth)
 {
-	/* 调试时展示属性的原始位置；这里只解释内存相关的值。 */
+	/* 调试时展示属性的原始位置；这里只解释内存和时钟频率。 */
 	if (depth <= 1 || (depth == 2 && current_root_child_is_reserved))
 		pr_debug("  FDT property: %s, value=%p, len=%u\n",
 			name, value, len);
+	if (depth == 1 && current_root_child_is_cpus &&
+	    strcmp(name, "timebase-frequency") == 0) {
+		if (!fdt_read_u32(value, len, &timebase_frequency) ||
+		    !timebase_frequency)
+			panic("invalid /cpus/timebase-frequency");
+		return;
+	}
 	if (depth == 2 && current_root_child_is_reserved &&
 	    strcmp(name, "reg") == 0) {
 		reserved_region_count += print_reg_ranges("FDT reserved-memory",
@@ -141,6 +153,8 @@ void start_kernel(unsigned long hartid, unsigned long dtb_pa)
 	unsigned long kernel_start = (unsigned long)_kernel_start;
 	unsigned long kernel_end = (unsigned long)_kernel_end;
 
+	/* 尽早安装 trap 入口，使后续启动故障可以报告现场。 */
+	trap_init();
 	early_puts("Hello from Minux!\n");
 	pr_info("boot hart: %lu\n", hartid);
 	if (!fdt_check_header((const void *)dtb_pa, &dtb_size))
@@ -158,6 +172,8 @@ void start_kernel(unsigned long hartid, unsigned long dtb_pa)
 		panic("invalid FDT structure");
 	if (!found_memory)
 		panic("no memory reg in FDT");
+	if (!timebase_frequency)
+		panic("no /cpus/timebase-frequency in FDT");
 	pr_debug("FDT root: #address-cells=%u, #size-cells=%u\n",
 		root_address_cells, root_size_cells);
 	if (!fdt_walk_reservations((const void *)dtb_pa,
@@ -169,5 +185,25 @@ void start_kernel(unsigned long hartid, unsigned long dtb_pa)
 	/* 只在 `make test` 构建时有效，普通构建下是空函数 */
 	run_selftests();
 
-	sbi_shutdown();
+	pr_info("timer: %u Hz, timebase: %u Hz\n",
+		TIMER_HZ, timebase_frequency);
+	timer_init(timebase_frequency);
+	trap_enable_interrupts();
+
+	/* 中断处理器只计数；普通上下文每秒报告一次，避免在中断中刷屏。 */
+	for (unsigned long reported = 0;;) {
+		unsigned long current;
+
+		asm volatile("wfi" : : : "memory");
+		current = timer_ticks();
+		if (current < reported + TIMER_HZ)
+			continue;
+		reported = current;
+		pr_info("timer: %lu ticks\n", current);
+#ifdef CONFIG_SELFTEST
+		/* 自测镜像观察两次周期报告后关机，便于 make test 完成。 */
+		if (current >= 2 * TIMER_HZ)
+			sbi_shutdown();
+#endif
+	}
 }

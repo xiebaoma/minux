@@ -26,6 +26,13 @@ void sbi_console_putchar(int ch)
 	sbi_ecall(SBI_EXT_0_1_CONSOLE_PUTCHAR, 0, ch, 0);
 }
 
+long sbi_set_timer(u64 deadline)
+{
+	/* RV64 的 a0 可一次传入完整的 64 位绝对时间。 */
+	return sbi_ecall(SBI_EXT_TIME, SBI_TIME_SET_TIMER,
+			 (unsigned long)deadline, 0).error;
+}
+
 void sbi_shutdown(void)
 {
 	sbi_ecall(SBI_EXT_SRST, SBI_SRST_RESET,
