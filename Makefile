@@ -40,16 +40,18 @@ SRCS := $(foreach d,$(SRC_DIRS),$(wildcard $(d)/*.c $(d)/*.S))
 OBJS := $(patsubst %,$(BUILD)/%.o,$(basename $(SRCS)))
 
 QEMU      := qemu-system-riscv64
-QEMUFLAGS := -machine virt -nographic -bios default -m 128M -smp 1 \
-             -kernel $(KERNEL)
+QEMU_BASE_FLAGS := -machine virt -nographic -bios default -m 128M -smp 1
+QEMUFLAGS := $(QEMU_BASE_FLAGS) -kernel $(KERNEL)
 
 .PHONY: all run test debug dump clean
 
 all: $(KERNEL)
 
-# 构建带自测的内核（build/test/minux.elf）并在 QEMU 中运行
+# 构建带自测的内核，在 QEMU 中验证内核自测和 UART/PLIC 中断
 test:
-	$(MAKE) TEST=1 run
+	$(MAKE) TEST=1 all
+	python3 tests/test_uart_irq.py $(QEMU) $(QEMU_BASE_FLAGS) \
+		-kernel build/test/minux.elf -monitor none -serial stdio
 
 $(KERNEL): $(OBJS) $(ARCH)/kernel.ld
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)

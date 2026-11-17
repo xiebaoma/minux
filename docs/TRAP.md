@@ -31,4 +31,4 @@ PLIC 为 UART IRQ 设置正优先级、打开 S 上下文的 enable 位，并把
 - 正常镜像与自测镜像均成功构建；QEMU 自测结果为 `143/143 passed, all OK`。
 - 用未加入仓库的临时镜像执行非法指令，QEMU 输出 `unhandled exception: cause=2` 和故障地址，验证了 trap 入口及异常诊断路径。
 - QEMU 自测镜像随后输出 `timer: 10 ticks`、`timer: 20 ticks` 并正常关机，验证了重复设置定时器和中断返回路径。
-- 使用独立串口 socket 分两次向 QEMU 输入 `IRQ-one` 和 `IRQ-two`，两段文本各回显一次，随后仍能收到 `timer: 20 ticks` 并正常关机。这验证了 UART 中断可以重复处理，且定时器中断可以接续工作。
+- `make test` 使用无本地回显的串口管道向 QEMU 输入 `IRQ-one`，等待一次定时器报告后再输入 `IRQ-two\r`。脚本确认两段文本各回显一次、回车转换为 `\r\n`、随后收到 `timer: 20 ticks`、自测全部通过且 QEMU 正常关机；超时或断言失败会使命令返回非零退出码。

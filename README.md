@@ -20,11 +20,12 @@ Minux 是一个面向 RISC-V 64 的类 Unix 宏内核。它以 Linux 的内核�
 | RISC-V 交叉编译工具链（GCC + binutils） | GCC 16.2.0 / binutils 2.47 |
 | QEMU（`qemu-system-riscv64`） | 11.1.3 |
 | GNU Make | 3.81 及以上 |
+| Python 3（`make test` 使用标准库） | 3.9 及以上 |
 
 macOS（Homebrew）：
 
 ```bash
-brew install qemu riscv64-elf-gcc
+brew install qemu riscv64-elf-gcc python
 ```
 
 使用其他工具链时，通过 `CROSS_COMPILE` 指定前缀，例如：
@@ -39,7 +40,7 @@ make CROSS_COMPILE=riscv64-unknown-elf-
 |---|---|
 | `make` | 构建内核镜像 `build/minux.elf` |
 | `make run` | 在 QEMU 中启动（按 `Ctrl-A X` 退出） |
-| `make test` | 构建带启动自测的内核 `build/test/minux.elf` 并运行；目前需检查输出是否为 `all OK` |
+| `make test` | 构建自测内核，自动检查全部自测、UART/PLIC 回显、定时器继续运行和 QEMU 正常退出 |
 | `make debug` | 启动 QEMU 并在第一条指令前暂停，GDB 服务监听 `localhost:1234` |
 | `make dump` | 生成反汇编文件 `build/minux.asm` |
 | `make clean` | 清理构建产物 |
@@ -62,7 +63,7 @@ include/minux/         内核通用头文件（types.h、string.h ...）
 init/                  通用初始化（start_kernel）
 kernel/                核心子系统（printk、panic）
 lib/                   通用库函数（string、vsprintf）
-tests/                 内核自测，只在 `make test` 时编译进内核
+tests/                 内核自测和 QEMU 串口集成测试
 docs/                  设计文档（FDT.md）与路线图
 ```
 
