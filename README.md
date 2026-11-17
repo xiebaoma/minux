@@ -2,7 +2,9 @@
 
 Minux 是一个面向 RISC-V 64 的类 Unix 宏内核。它以 Linux 的内核架构为参照，在保持代码精简、可读的前提下，提供与 Linux 兼容的系统调用接口。
 
-> **状态**：早期开发。当前版本 `v0.0` 能完成引导，进入 S 模式内核入口。
+> **状态**：早期开发。当前版本 `v0.1` 可在 QEMU `virt` 启动，输出 hart 与物理内存布局。
+
+`v0.1` 已实现早期 `printk`/`panic`、字符串函数、侵入式链表和 FDT 读取。内存输出包含 RAM、固件保留区、内核镜像和 DTB 的位置；它还不是可分配物理页列表。FDT 的支持范围与后续工作见 [FDT 设计说明](docs/FDT.md)。
 
 ## 设计目标
 
@@ -37,7 +39,7 @@ make CROSS_COMPILE=riscv64-unknown-elf-
 |---|---|
 | `make` | 构建内核镜像 `build/minux.elf` |
 | `make run` | 在 QEMU 中启动（按 `Ctrl-A X` 退出） |
-| `make test` | 构建带启动自测的内核 `build/test/minux.elf` 并运行 |
+| `make test` | 构建带启动自测的内核 `build/test/minux.elf` 并运行；目前需检查输出是否为 `all OK` |
 | `make debug` | 启动 QEMU 并在第一条指令前暂停，GDB 服务监听 `localhost:1234` |
 | `make dump` | 生成反汇编文件 `build/minux.asm` |
 | `make clean` | 清理构建产物 |
@@ -61,7 +63,7 @@ init/                  通用初始化（start_kernel）
 kernel/                核心子系统（printk、panic）
 lib/                   通用库函数（string、vsprintf）
 tests/                 内核自测，只在 `make test` 时编译进内核
-docs/                  设计文档与路线图
+docs/                  设计文档（FDT.md）与路线图
 ```
 
 ## 路线图

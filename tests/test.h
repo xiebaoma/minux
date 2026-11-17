@@ -21,5 +21,6 @@ void test_puts(const char *s);
 void test_string(void);
 void test_list(void);
 void test_printk(void);
+void test_fdt(void);
 
 #endif /* _TESTS_TEST_H */
