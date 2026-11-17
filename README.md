@@ -2,9 +2,11 @@
 
 Minux 是一个面向 RISC-V 64 的类 Unix 宏内核。它以 Linux 的内核架构为参照，在保持代码精简、可读的前提下，提供与 Linux 兼容的系统调用接口。
 
-> **状态**：早期开发。当前版本 `v0.1` 可在 QEMU `virt` 启动，输出 hart 与物理内存布局。
+> **状态**：早期开发。当前版本 `v0.2` 可在 QEMU `virt` 单 hart 配置下运行周期性定时器，并通过 UART 中断回显串口输入。
 
 `v0.1` 已实现早期 `printk`/`panic`、字符串函数、侵入式链表和 FDT 读取。内存输出包含 RAM、固件保留区、内核镜像和 DTB 的位置；它还不是可分配物理页列表。FDT 的支持范围与后续工作见 [FDT 设计说明](docs/FDT.md)。
+
+`v0.2` 增加 trap 现场保存、定时器中断、PLIC 和 UART 接收中断。未处理的异常会打印现场并停机；实现范围和验证方法见 [Trap 与中断设计说明](docs/TRAP.md)。
 
 ## 设计目标
 
@@ -64,7 +66,7 @@ init/                  通用初始化（start_kernel）
 kernel/                核心子系统（printk、panic）
 lib/                   通用库函数（string、vsprintf）
 tests/                 内核自测和 QEMU 串口集成测试
-docs/                  设计文档（FDT.md）与路线图
+docs/                  FDT、Trap 与中断设计文档及路线图
 ```
 
 ## 路线图
