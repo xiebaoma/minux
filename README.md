@@ -4,10 +4,6 @@ Minux 是一个面向 RISC-V 64 的类 Unix 宏内核。它以 Linux 的内核�
 
 > **状态**：早期开发。当前版本 `v0.2` 可在 QEMU `virt` 单 hart 配置下运行周期性定时器，并通过 UART 中断回显串口输入。
 
-`v0.1` 已实现早期 `printk`/`panic`、字符串函数、侵入式链表和 FDT 读取。内存输出包含 RAM、固件保留区、内核镜像和 DTB 的位置；它还不是可分配物理页列表。FDT 的支持范围与后续工作见 [FDT 设计说明](docs/FDT.md)。
-
-`v0.2` 增加 trap 现场保存、定时器中断、PLIC 和 UART 接收中断。未处理的异常会打印现场并停机；实现范围和验证方法见 [Trap 与中断设计说明](docs/TRAP.md)。
-
 ## 设计目标
 
 - **平台**：RISC-V 64（RV64IMAC），首要目标机器为 QEMU `virt`
@@ -30,12 +26,6 @@ macOS（Homebrew）：
 brew install qemu riscv64-elf-gcc python
 ```
 
-使用其他工具链时，通过 `CROSS_COMPILE` 指定前缀，例如：
-
-```bash
-make CROSS_COMPILE=riscv64-unknown-elf-
-```
-
 ## 构建与运行
 
 | 命令 | 说明 |
@@ -47,11 +37,6 @@ make CROSS_COMPILE=riscv64-unknown-elf-
 | `make dump` | 生成反汇编文件 `build/minux.asm` |
 | `make clean` | 清理构建产物 |
 
-调试需要另外安装 RISC-V GDB（例如 `brew install riscv64-elf-gdb`）：
-
-```bash
-riscv64-elf-gdb build/minux.elf -ex 'target remote :1234'
-```
 
 ## 目录结构
 
