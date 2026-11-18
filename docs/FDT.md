@@ -28,7 +28,7 @@ DTB 是一块连续的扁平字节数据，不是已经展开的 C 节点树。�
 - **RAM** 来自根节点下启用的 `memory` / `memory@...` 节点的 `reg`。
 - **保留区** 来自启用的 `/reserved-memory` 子节点的静态 `reg`、FDT 头部指向的保留表、内核镜像和 DTB 自身。
 
-`memblock_for_each_free_range()` 给出可交给页帧分配器的连续页帧区间。RAM 只计入完整的 4 KiB 页，保留区覆盖所有与它相交的页。启动日志用这个结果计算总 RAM 页、保留 RAM 页和空闲页。以后从空闲 RAM 中划出分配器元数据时，应先将那段范围登记为保留区。
+`memblock_for_each_free_range()` 给出可交给页帧分配器的连续页帧区间。RAM 只计入完整页，保留区覆盖所有与它相交的页。`buddy_init()` 先用 `memblock_alloc_pages()` 分配并保留页描述符占用的内存，再接管剩余空闲页。启动日志从 memblock 读取 RAM 总页数，从 buddy 读取空闲页数，两者之差是保留页数。后续分配流程见[物理内存管理](MM.md)。
 
 ### 静态和动态保留区
 

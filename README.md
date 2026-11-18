@@ -2,7 +2,7 @@
 
 Minux 是一个面向 RISC-V 64 的类 Unix 宏内核。它以 Linux 的内核架构为参照，在保持代码精简、可读的前提下，提供与 Linux 兼容的系统调用接口。
 
-> **状态**：早期开发。当前版本 `v0.2` 可在 QEMU `virt` 单 hart 配置下运行周期性定时器，并通过 UART 中断回显串口输入。
+> **当前版本 `v0.3`**。Minux 在 QEMU `virt` 单 hart 配置下支持物理页帧分配和 `kmalloc()`，启动时报告 RAM 总页数、保留页数和空闲页数。周期性定时器与 UART 中断回显也可用。
 
 ## 设计目标
 
@@ -50,10 +50,12 @@ include/minux/         内核通用头文件（types.h、string.h ...）
 init/                  通用初始化（start_kernel）
 kernel/                核心子系统（printk、panic）
 lib/                   通用库函数（string、vsprintf）
+mm/                    启动内存表、buddy 页帧分配器、slab 对象分配器
 tests/                 内核自测和 QEMU 串口集成测试
-docs/                  FDT、Trap 与中断设计文档及路线图
+docs/                  内存管理、FDT、异常与中断设计文档及路线图
 ```
 
-## 路线图
+## 设计文档与路线图
 
-见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+- [物理内存管理](docs/MM.md)
+- [路线图](docs/ROADMAP.md)
