@@ -154,7 +154,7 @@ void virt_probe_irq_devices(const void *dtb, unsigned long hartid,
 	/* DT 规范的默认值；QEMU /soc 会显式覆盖为 2、2。 */
 	soc_address_cells = 2;
 	soc_size_cells = 1;
-	if (!fdt_walk(dtb, probe_node, probe_property))
+	if (!fdt_walk(dtb, probe_node, probe_property, NULL))
 		panic("invalid FDT while probing IRQ devices");
 	if (!soc_has_ranges || !plic_compatible || !uart_compatible ||
 	    !plic_phandle || uart_interrupt_parent != plic_phandle ||

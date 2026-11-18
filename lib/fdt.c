@@ -186,8 +186,8 @@ static const char *fdt_property_name(const u8 *strings, u32 size, u32 nameoff)
 	return NULL;
 }
 
-bool fdt_walk(const void *dtb, fdt_node_visitor visit_node,
-	      fdt_property_visitor visit_property)
+bool fdt_walk(const void *dtb, fdt_node_visitor begin_node,
+	      fdt_property_visitor visit_property, fdt_end_node_visitor end_node)
 {
 	const u8 *p = dtb;
 	const u8 *block, *strings;
@@ -215,8 +215,8 @@ bool fdt_walk(const void *dtb, fdt_node_visitor visit_node,
 				return false;
 			if (!fdt_read_name(block, size, &pos, &name))
 				return false;
-			if (visit_node)
-				visit_node(name, depth);
+			if (begin_node)
+				begin_node(name, depth);
 			depth++;
 			saw_root = true;
 			break;
@@ -225,6 +225,8 @@ bool fdt_walk(const void *dtb, fdt_node_visitor visit_node,
 			if (depth == 0)
 				return false;
 			depth--;
+			if (end_node)
+				end_node(depth);
 			break;
 		case FDT_PROP: {
 			const char *name;

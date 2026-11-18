@@ -1,10 +1,10 @@
-# FDT 早期读取（v0.1）
+# FDT 早期读取
 
 ## 目的与启动顺序
 
 在当前 QEMU `virt` 启动路径中，OpenSBI 通过 `a0` 传入启动 hart 编号、通过 `a1` 传入 DTB 的物理地址。Minux 尚未启用分页：`head.S` 使用内核镜像中预留的启动栈，再调用 `start_kernel(hartid, dtb_pa)`。此时读取 DTB 不依赖物理内存分配器；启动链必须保证传入地址可读，并在解析期间保留 DTB 内容。
 
-`start_kernel()` 的顺序是：检查 DTB 头部，遍历节点和属性，输出 RAM 与 `/reserved-memory` 的静态范围，再遍历头部指向的内存保留表。它还会输出内核镜像和 DTB 自身的地址区间。所有区间均使用 `[起点, 终点)` 表示，终点不属于该区间。
+`start_kernel()` 检查 DTB 头部，登记内核镜像和 DTB 自身的地址区间，再遍历节点、属性和头部指向的内存保留表。所有区间均使用 `[起点, 终点)` 表示，终点不属于该区间。
 
 ## 数据如何读取
 
@@ -13,7 +13,7 @@ DTB 是一块连续的扁平字节数据，不是已经展开的 C 节点树。�
 | 接口 | 当前用途 |
 |---|---|
 | `fdt_check_header()` | 检查 magic、版本、区块偏移、长度与对齐。 |
-| `fdt_walk()` | 顺序遍历结构区，通过回调交出节点和属性。 |
+| `fdt_walk()` | 顺序遍历结构区，通过回调报告节点开始、节点属性和节点结束。 |
 | `fdt_read_u32()` / `fdt_read_cells()` | 按大端读取一个或两个 32 位 cell。 |
 | `fdt_walk_reservations()` | 遍历由 64 位地址、64 位长度组成的内存保留表。 |
 
@@ -21,18 +21,20 @@ DTB 是一块连续的扁平字节数据，不是已经展开的 C 节点树。�
 
 内存保留表与 `/reserved-memory` 是两处不同的数据来源。前者在 DTB 头部指定的独立区块中；后者是树中的节点。当前 QEMU/OpenSBI 把两段 M 模式固件占用区放在 `/reserved-memory` 下。RAM 节点描述的是物理 RAM 总范围，包含其中被固件和内核占用的地址；不能直接当作空闲页列表。
 
-## v0.1 支持范围
+## v0.3 启动内存表
 
-此实现面向当前 QEMU `virt` 和 OpenSBI 提供的 DTB，读取根节点下 `memory` / `memory@...` 的 `reg`，以及 `/reserved-memory` 直接子节点的静态 `reg`。地址和长度分别支持 1 或 2 个 cell；非空的 `/reserved-memory/ranges` 需要地址转换，当前会报错停机。解析器要求内存保留表、结构区、字符串区按此顺序排列。
+`boot_memblock` 参照 Linux 的 `memblock`，分别记录 RAM 和保留区。两张表都按地址排序，合并相邻或重叠的区间，每张表最多容纳 32 个区间。表放在内核 BSS 中，属于内核镜像的保留范围。
 
-已知限制：
+- **RAM** 来自根节点下启用的 `memory` / `memory@...` 节点的 `reg`。
+- **保留区** 来自启用的 `/reserved-memory` 子节点的静态 `reg`、FDT 头部指向的保留表、内核镜像和 DTB 自身。
 
-- `/reserved-memory` 子节点的 `size` 动态分配请求目前不会被处理；v0.3 引入物理内存分配器时需要实现或明确拒绝。
-- 目前未检查节点的 `status`。带 `status = "disabled"` 的静态保留区仍会被打印和计数；扩大平台支持前需修正。
-- `no-map`、`reusable` 等属性尚未转化为映射或分配策略。结构遍历也未实现设备树规范的全部语法校验。
-- 头部检查只能检查已经读到的内容。首次访问 `dtb_pa` 依赖可信的启动链；当前没有异常处理器来恢复错误的物理地址访问。
+`memblock_for_each_free_range()` 给出可交给页帧分配器的连续页帧区间。RAM 只计入完整的 4 KiB 页，保留区覆盖所有与它相交的页。启动日志用这个结果计算总 RAM 页、保留 RAM 页和空闲页。以后从空闲 RAM 中划出分配器元数据时，应先将那段范围登记为保留区。
 
-Minux 目前只在遍历时打印范围，没有把解析结果保存成节点树或可分配内存表。后续建立分配器时，需在 RAM 总范围中排除固件保留区、内核镜像、DTB 和早期分配所占空间；开启分页前还需为 DTB 建立有效映射或复制它。Linux 的早期启动也先读取 FDT，再建立用于管理物理页的内存区域信息；其临时页表与 FDT 映射流程见 [RISC-V 启动文档](https://www.kernel.org/doc/html/latest/arch/riscv/boot.html)。
+### 静态和动态保留区
+
+静态 `reg` 直接给出物理起点和字节数。动态 `size` 给出要保留的字节数，由内核在启动时选定一段连续 RAM，还可以用 `alignment` 约束对齐、用 `alloc-ranges` 限定候选地址范围。两者同时存在时以 `reg` 为准。Minux 遇到启用且只有 `size` 的子节点会打印节点名并停机。 [Devicetree 规范](https://devicetree-specification.readthedocs.io/en/latest/chapter3-devicenodes.html#reserved-memory-child-nodes)
+
+地址和长度分别支持 1 或 2 个 cell。启用的 `/reserved-memory` 若带非空 `ranges`，启动会报错停机。`no-map` 和 `reusable` 区域都从空闲页中扣除，映射和回收策略留待后续版本。解析器要求内存保留表、结构区、字符串区按此顺序排列。首次访问 `dtb_pa` 依赖可信的启动链，开启分页前需要为 DTB 建立有效映射或复制它。
 
 ## v0.1 验收
 

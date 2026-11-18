@@ -67,6 +67,7 @@ static void make_reservation_fdt(u8 *dtb)
 }
 
 static unsigned int node_count;
+static bool root_end_seen;
 static bool root_is_empty_name;
 static unsigned int property_count;
 static bool property_ok;
@@ -79,6 +80,11 @@ static void count_node(const char *name, unsigned int depth)
 	node_count++;
 	if (depth == 0)
 		root_is_empty_name = name[0] == '\0';
+}
+
+static void end_root_node(unsigned int depth)
+{
+	root_end_seen = depth == 0 && node_count == 1;
 }
 
 static void capture_property(const char *name, const void *value,
@@ -144,32 +150,32 @@ void test_fdt(void)
 	make_fdt(dtb);
 	node_count = 0;
 	root_is_empty_name = false;
-	check(fdt_walk(dtb, count_node, NULL) && node_count == 1 &&
-	      root_is_empty_name, "FDT: walk root node");
+	check(fdt_walk(dtb, count_node, NULL, end_root_node) && node_count == 1 &&
+	      root_is_empty_name && root_end_seen, "FDT: walk root node");
 	make_fdt(dtb);
 	memset(dtb + 60, 'x', 12);
-	check(!fdt_walk(dtb, count_node, NULL), "FDT: unterminated node name");
+	check(!fdt_walk(dtb, count_node, NULL, NULL), "FDT: unterminated node name");
 	make_fdt(dtb);
 	put_be32(dtb + 68, 0);
-	check(!fdt_walk(dtb, count_node, NULL), "FDT: missing end token");
+	check(!fdt_walk(dtb, count_node, NULL, NULL), "FDT: missing end token");
 
 	make_property_fdt(dtb);
 	property_count = 0;
 	property_ok = false;
 	expected_value = dtb + 76;
-	check(fdt_walk(dtb, NULL, capture_property) && property_count == 1 &&
+	check(fdt_walk(dtb, NULL, capture_property, NULL) && property_count == 1 &&
 	      property_ok, "FDT: property name, value address, and length");
 	make_property_fdt(dtb);
 	put_be32(dtb + 72, 4);
-	check(!fdt_walk(dtb, NULL, capture_property),
+	check(!fdt_walk(dtb, NULL, capture_property, NULL),
 	      "FDT: property name offset outside strings block");
 	make_property_fdt(dtb);
 	memcpy(dtb + 88, "regs", 4);
-	check(!fdt_walk(dtb, NULL, capture_property),
+	check(!fdt_walk(dtb, NULL, capture_property, NULL),
 	      "FDT: unterminated property name");
 	make_property_fdt(dtb);
 	put_be32(dtb + 68, 100);
-	check(!fdt_walk(dtb, NULL, capture_property),
+	check(!fdt_walk(dtb, NULL, capture_property, NULL),
 	      "FDT: property value exceeds structure block");
 
 	make_fdt(dtb);

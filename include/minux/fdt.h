@@ -19,6 +19,7 @@ bool fdt_walk_reservations(const void *dtb, fdt_reservation_visitor visit);
 
 /* depth=0 表示根节点；name 指向 DTB 内已确认以 '\0' 结尾的名字。 */
 typedef void (*fdt_node_visitor)(const char *name, unsigned int depth);
+typedef void (*fdt_end_node_visitor)(unsigned int depth);
 
 /*
  * 属性回调中的 depth 是所属节点的层级。
@@ -27,8 +28,9 @@ typedef void (*fdt_node_visitor)(const char *name, unsigned int depth);
 typedef void (*fdt_property_visitor)(const char *name, const void *value,
 				     u32 len, unsigned int depth);
 
-/* 顺序走过节点和属性；不需要的回调可传 NULL。格式错误时返回 false。 */
-bool fdt_walk(const void *dtb, fdt_node_visitor visit_node,
-	      fdt_property_visitor visit_property);
+/* 顺序走过节点和属性；同一节点的开始和结束回调收到相同的 depth。 */
+/* 不需要的回调可传 NULL。格式错误时返回 false。 */
+bool fdt_walk(const void *dtb, fdt_node_visitor begin_node,
+	      fdt_property_visitor visit_property, fdt_end_node_visitor end_node);
 
 #endif /* _MINUX_FDT_H */

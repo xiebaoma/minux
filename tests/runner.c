@@ -15,6 +15,7 @@ static const struct test_suite suites[] = {
 	{ "list",   test_list },
 	{ "printk", test_printk },
 	{ "fdt",    test_fdt },
+	{ "memblock", test_memblock },
 };
 
 static int failures;

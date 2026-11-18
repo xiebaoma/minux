@@ -31,7 +31,7 @@ LDFLAGS := -T $(ARCH)/kernel.ld -nostdlib --no-warn-rwx-segments
 
 # 自动收集这些目录下的源文件：新建 .c 文件后无需改 Makefile。
 # 链接顺序无所谓：_start 位于 .text.entry 段，链接脚本保证它排在最前。
-SRC_DIRS := $(ARCH) init lib kernel
+SRC_DIRS := $(ARCH) init lib kernel mm
 ifeq ($(TEST),1)
 SRC_DIRS += tests
 CFLAGS   += -DCONFIG_SELFTEST

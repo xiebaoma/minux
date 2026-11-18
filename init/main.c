@@ -1,3 +1,4 @@
+#include <asm/page.h>
 #include <asm/plic.h>
 #include <asm/sbi.h>
 #include <asm/timer.h>
@@ -6,6 +7,7 @@
 #include <asm/virt.h>
 #include <minux/fdt.h>
 #include <minux/limits.h>
+#include <minux/memblock.h>
 #include <minux/panic.h>
 #include <minux/printk.h>
 #include <minux/selftest.h>
@@ -23,10 +25,17 @@ static u32 reserved_size_cells;
 static bool current_root_child_is_memory;
 static bool current_root_child_is_reserved;
 static bool current_root_child_is_cpus;
-static bool found_memory;
+static bool reserved_available;
+static bool reserved_needs_translation;
 static u32 timebase_frequency;
-static unsigned int fdt_reservation_count;
-static unsigned int reserved_region_count;
+
+static struct memory_node {
+	const char *name;
+	const void *reg;
+	u32 reg_len;
+	bool has_size;
+	bool available;
+} memory_node;
 
 static void early_puts(const char *s)
 {
@@ -34,7 +43,7 @@ static void early_puts(const char *s)
 		sbi_console_putchar(*s++);
 }
 
-static void log_fdt_node(const char *name, unsigned int depth)
+static void scan_fdt_node(const char *name, unsigned int depth)
 {
 	/* 调试时展示根、第一层节点，以及 /reserved-memory 的子节点。 */
 	if (depth <= 1 || (depth == 2 && current_root_child_is_reserved))
@@ -49,19 +58,23 @@ static void log_fdt_node(const char *name, unsigned int depth)
 		if (current_root_child_is_reserved) {
 			reserved_address_cells = root_address_cells;
 			reserved_size_cells = root_size_cells;
+			reserved_available = true;
+			reserved_needs_translation = false;
 		}
 	}
+	if ((depth == 1 && current_root_child_is_memory) ||
+	    (depth == 2 && current_root_child_is_reserved))
+		memory_node = (struct memory_node){ .name = name, .available = true };
 }
 
-static unsigned int print_reg_ranges(const char *kind, const void *value,
-				     u32 len, u32 address_cells,
-				     u32 size_cells)
+static void add_reg_ranges(const void *value, u32 len, u32 address_cells,
+			   u32 size_cells, bool reserved)
 {
+	const char *kind = reserved ? "FDT reserved-memory" : "physical RAM";
 	const u8 *p = value;
 	u32 address_bytes, size_bytes, entry_bytes;
-	unsigned int count = 0;
 
-	/* v0.1 只需处理能装入 u64 的 1 或 2 个 cell。 */
+	/* 当前只处理能装入 u64 的 1 或 2 个 cell。 */
 	if (address_cells < 1 || address_cells > 2 ||
 	    size_cells < 1 || size_cells > 2)
 		panic("unsupported %s address/size cell count", kind);
@@ -73,7 +86,7 @@ static unsigned int print_reg_ranges(const char *kind, const void *value,
 
 	/* reg 可以包含多组 <起点, 长度>。 */
 	for (u32 off = 0; off < len; off += entry_bytes) {
-		u64 start, bytes, end;
+		u64 start, bytes;
 
 		if (!fdt_read_cells(p + off, address_bytes,
 				    address_cells, &start) ||
@@ -82,15 +95,21 @@ static unsigned int print_reg_ranges(const char *kind, const void *value,
 			panic("invalid %s reg cells", kind);
 		if (bytes == 0 || start > ULLONG_MAX - bytes)
 			panic("invalid %s range", kind);
-		end = start + bytes;
+		if (!(reserved ? memblock_reserve(&boot_memblock, start, bytes) :
+				 memblock_add(&boot_memblock, start, bytes)))
+			panic("boot memory table full while recording %s", kind);
 		pr_info("%s: [0x%llx, 0x%llx), %llu bytes\n",
-			kind, start, end, bytes);
-		count++;
+			kind, start, start + bytes, bytes);
 	}
-	return count;
 }
 
-static void log_fdt_property(const char *name, const void *value,
+static bool fdt_status_available(const void *value, u32 len)
+{
+	return (len == sizeof("okay") && memcmp(value, "okay", len) == 0) ||
+	       (len == sizeof("ok") && memcmp(value, "ok", len) == 0);
+}
+
+static void scan_fdt_property(const char *name, const void *value,
 			     u32 len, unsigned int depth)
 {
 	/* 调试时展示属性的原始位置；这里只解释内存和时钟频率。 */
@@ -104,17 +123,16 @@ static void log_fdt_property(const char *name, const void *value,
 			panic("invalid /cpus/timebase-frequency");
 		return;
 	}
-	if (depth == 2 && current_root_child_is_reserved &&
-	    strcmp(name, "reg") == 0) {
-		reserved_region_count += print_reg_ranges("FDT reserved-memory",
-			value, len, reserved_address_cells, reserved_size_cells);
-		return;
-	}
-	if (depth == 1 && current_root_child_is_memory &&
-	    strcmp(name, "reg") == 0) {
-		print_reg_ranges("physical RAM", value, len,
-				 root_address_cells, root_size_cells);
-		found_memory = true;
+	if ((depth == 1 && current_root_child_is_memory) ||
+	    (depth == 2 && current_root_child_is_reserved)) {
+		if (strcmp(name, "reg") == 0) {
+			memory_node.reg = value;
+			memory_node.reg_len = len;
+		} else if (strcmp(name, "size") == 0) {
+			memory_node.has_size = true;
+		} else if (strcmp(name, "status") == 0) {
+			memory_node.available = fdt_status_available(value, len);
+		}
 		return;
 	}
 	if (depth == 1 && current_root_child_is_reserved) {
@@ -124,9 +142,10 @@ static void log_fdt_property(const char *name, const void *value,
 		} else if (strcmp(name, "#size-cells") == 0) {
 			if (!fdt_read_u32(value, len, &reserved_size_cells))
 				panic("invalid reserved-memory #size-cells");
-		} else if (strcmp(name, "ranges") == 0 && len != 0) {
-			/* 非空 ranges 需要地址转换；v0.1 不猜测转换结果。 */
-			panic("unsupported reserved-memory address translation");
+		} else if (strcmp(name, "ranges") == 0) {
+			reserved_needs_translation = len != 0;
+		} else if (strcmp(name, "status") == 0) {
+			reserved_available = fdt_status_available(value, len);
 		}
 		return;
 	}
@@ -143,16 +162,52 @@ static void log_fdt_property(const char *name, const void *value,
 	}
 }
 
-static void log_fdt_reservation(u64 address, u64 size)
+static void finish_fdt_node(unsigned int depth)
 {
+	if (depth == 1 && current_root_child_is_reserved && reserved_available &&
+	    reserved_needs_translation)
+		panic("unsupported reserved-memory address translation");
+
+	if (depth == 1 && current_root_child_is_memory && memory_node.available &&
+	    memory_node.reg)
+		add_reg_ranges(memory_node.reg, memory_node.reg_len,
+			       root_address_cells, root_size_cells, false);
+	if (depth != 2 || !current_root_child_is_reserved || !reserved_available ||
+	    !memory_node.available)
+		return;
+
+	/* 属性顺序任意。同一节点同时有 reg 和 size 时，以 reg 为准。 */
+	if (memory_node.reg)
+		add_reg_ranges(memory_node.reg, memory_node.reg_len,
+			       reserved_address_cells, reserved_size_cells, true);
+	else if (memory_node.has_size)
+		panic("unsupported dynamic /reserved-memory/%s (size without reg)",
+		      memory_node.name);
+	else
+		panic("missing reg or size in /reserved-memory/%s", memory_node.name);
+}
+
+static void reserve_fdt_range(u64 address, u64 size)
+{
+	if (!memblock_reserve(&boot_memblock, address, size))
+		panic("boot memory table full while recording FDT reservations");
 	pr_info("FDT reserved: [0x%llx, 0x%llx)\n",
 		address, address + size);
-	fdt_reservation_count++;
+}
+
+static void log_free_range(u64 start_pfn, u64 end_pfn, void *data)
+{
+	u64 *free_pages = data;
+
+	*free_pages += end_pfn - start_pfn;
+	pr_debug("free RAM: [0x%llx, 0x%llx)\n",
+		 start_pfn * PAGE_SIZE, end_pfn * PAGE_SIZE);
 }
 
 void start_kernel(unsigned long hartid, unsigned long dtb_pa)
 {
 	u32 dtb_size;
+	u64 ram_pages, free_pages = 0;
 	struct virt_irq_devices irq_devices;
 	unsigned long kernel_start = (unsigned long)_kernel_start;
 	unsigned long kernel_end = (unsigned long)_kernel_end;
@@ -171,20 +226,33 @@ void start_kernel(unsigned long hartid, unsigned long dtb_pa)
 		kernel_start, kernel_end);
 	pr_info("DTB storage: [0x%lx, 0x%lx)\n",
 		dtb_pa, dtb_pa + dtb_size);
-	if (!fdt_walk((const void *)dtb_pa, log_fdt_node,
-		      log_fdt_property))
+
+	/* 先登记内核镜像和 DTB 本身占用的物理地址。 */
+	if (!memblock_reserve(&boot_memblock, kernel_start, kernel_end - kernel_start) ||
+	    !memblock_reserve(&boot_memblock, dtb_pa, dtb_size))
+		panic("cannot reserve kernel or DTB in boot memory table");
+
+	/* 遍历设备树节点：memory 提供 RAM，/reserved-memory 提供保留区。 */
+	if (!fdt_walk((const void *)dtb_pa, scan_fdt_node, scan_fdt_property,
+		      finish_fdt_node))
 		panic("invalid FDT structure");
-	if (!found_memory)
-		panic("no memory reg in FDT");
+	ram_pages = memblock_memory_pages(&boot_memblock);
+	if (!ram_pages)
+		panic("no full physical RAM pages in FDT");
 	if (!timebase_frequency)
 		panic("no /cpus/timebase-frequency in FDT");
 	pr_debug("FDT root: #address-cells=%u, #size-cells=%u\n",
 		root_address_cells, root_size_cells);
+
+	/* DTB 头部还指向一张独立的内存保留表，把其中的范围也登记进去。 */
 	if (!fdt_walk_reservations((const void *)dtb_pa,
-				   log_fdt_reservation))
+				   reserve_fdt_range))
 		panic("invalid FDT memory reservation block");
-	pr_debug("FDT memory reservation entries: %u\n", fdt_reservation_count);
-	pr_debug("FDT reserved-memory ranges: %u\n", reserved_region_count);
+
+	/* 从 RAM 中扣掉所有保留区，再由 log_free_range 逐段累加空闲页数。 */
+	memblock_for_each_free_range(&boot_memblock, log_free_range, &free_pages);
+	pr_info("memory: %llu RAM pages, %llu reserved, %llu free\n",
+		ram_pages, ram_pages - free_pages, free_pages);
 
 	/* 只在 `make test` 构建时有效，普通构建下是空函数 */
 	run_selftests();
