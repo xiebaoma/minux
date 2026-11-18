@@ -1,6 +1,7 @@
-#include <asm/page.h>
 #include <minux/buddy.h>
 #include <minux/memblock.h>
+#include <minux/page.h>
+#include <minux/slab.h>
 #include "test.h"
 
 struct free_layout {
@@ -84,6 +85,8 @@ static void test_block(const struct free_layout *layout)
 	phys = page_to_phys(page);
 	check(phys % (pages * PAGE_SIZE) == 0 && span_is_usable(phys, pages),
 	      "buddy: the whole block is aligned and inside one usable range");
+	check(virt_to_page((char *)page_address(page) + PAGE_SIZE - 1) == page,
+	      "buddy: mapped addresses resolve to their page, including interior bytes");
 	check(buddy_free_pages() == layout->pages - pages,
 	      "buddy: allocation accounts for every page in the block");
 	check(!free_pages(page, order ? order - 1 : 1) &&
@@ -121,12 +124,14 @@ static void test_exhaustion(const struct free_layout *layout)
 		}
 		if (!tail_page && (phys & PAGE_SIZE) && span_is_usable(phys - PAGE_SIZE, 2))
 			tail_page = page;
-		node = (struct held_page *)(uintptr_t)phys;
+		node = page_address(page);
 		*node = (struct held_page){ head, page, ++allocated };
 		head = node;
 	}
 	check(allocated == layout->pages && !buddy_free_pages() && !alloc_pages(0),
 	      "buddy: split blocks until every usable page is allocated");
+	check(!kmalloc(16) && !kmalloc(PAGE_SIZE),
+	      "slab: small and large allocations fail when buddy is exhausted");
 
 	/* 编号应按相反顺序读回，重复分配同一页会覆盖先前的编号。 */
 	for (u64 number = allocated; number && head; number--) {

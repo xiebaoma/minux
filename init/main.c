@@ -1,4 +1,3 @@
-#include <asm/page.h>
 #include <asm/plic.h>
 #include <asm/sbi.h>
 #include <asm/timer.h>
@@ -9,9 +8,11 @@
 #include <minux/fdt.h>
 #include <minux/limits.h>
 #include <minux/memblock.h>
+#include <minux/page.h>
 #include <minux/panic.h>
 #include <minux/printk.h>
 #include <minux/selftest.h>
+#include <minux/slab.h>
 #include <minux/string.h>
 
 /* kernel.ld 给出的镜像边界；当前未启用分页，链接地址就是物理地址。 */
@@ -252,6 +253,7 @@ void start_kernel(unsigned long hartid, unsigned long dtb_pa)
 	/* 保留区登记完毕，再把空闲页交给 buddy，供启动自测使用。 */
 	if (!buddy_init(&boot_memblock))
 		panic("cannot initialize buddy allocator");
+	slab_init();
 	memblock_for_each_free_range(&boot_memblock, log_free_range, NULL);
 	nr_free_pages = buddy_free_pages();
 	pr_info("memory: %llu RAM pages, %llu reserved, %llu free\n",

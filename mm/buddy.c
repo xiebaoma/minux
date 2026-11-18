@@ -1,22 +1,8 @@
-#include <asm/page.h>
 #include <minux/buddy.h>
 #include <minux/limits.h>
-#include <minux/list.h>
 #include <minux/memblock.h>
-
-enum page_state {
-	PAGE_RESERVED,			//这个页帧已被保留，例如被内核镜像、固件、DTB 或页描述符占用。buddy 不会分配它。
-	PAGE_BLOCK_TAIL,		//这个页帧是某个块的内部页，也就是首帧之后的每一页。它跟随整块一起分配或归还。
-	PAGE_FREE_HEAD,			//这个页帧是空闲块的首帧。它记录整块的 order，并挂在对应阶的空闲链表上。
-	PAGE_ALLOCATED_HEAD,	//这个页帧是已分配块的首帧。它记录分配时的 order，归还时要传入这个首帧和原来的阶数。
-};
-
-struct page {
-	struct list_head buddy_link;
-	u64 pfn;
-	enum page_state state;
-	unsigned int order;
-};
+#include <minux/page.h>
+#include "page_internal.h"
 
 /* 每段只为实际存在的页建描述符，段之间的物理地址空洞不占空间。 */
 struct page_bank {
@@ -99,8 +85,7 @@ bool buddy_init(struct memblock *map)
 	/* 先预留描述符占用的整页，后续遍历才会将这些页排除。 */
 	if (!memblock_alloc_pages(map, pfn_up(bytes), &phys))
 		return false;
-	/* 当前启动阶段尚未启用分页，物理地址可直接访问。 */
-	page_map = (struct page *)(uintptr_t)phys;
+	page_map = arch_phys_to_virt(phys);
 	page_map_bytes = bytes;
 	next = page_map;
 
@@ -141,6 +126,7 @@ struct page *alloc_pages(unsigned int order)
 	}
 	page->state = PAGE_ALLOCATED_HEAD;
 	page->order = order;
+	page->owner = PAGE_OWNER_BUDDY;
 	return page;
 }
 
@@ -181,6 +167,23 @@ bool free_pages(struct page *page, unsigned int order)
 u64 page_to_phys(const struct page *page)
 {
 	return page->pfn * PAGE_SIZE;
+}
+
+void *page_address(const struct page *page)
+{
+	return arch_phys_to_virt(page_to_phys(page));
+}
+
+struct page *virt_to_page(const void *addr)
+{
+	const struct page_bank *bank;
+	u64 phys, pfn;
+
+	if (!arch_virt_to_phys(addr, &phys))
+		return NULL;
+	pfn = phys / PAGE_SIZE;
+	bank = find_bank(pfn);
+	return bank ? &bank->pages[pfn - bank->start_pfn] : NULL;
 }
 
 u64 buddy_free_pages(void)

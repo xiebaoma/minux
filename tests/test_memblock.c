@@ -1,6 +1,6 @@
-#include <asm/page.h>
 #include <minux/limits.h>
 #include <minux/memblock.h>
+#include <minux/page.h>
 #include "test.h"
 
 struct free_ranges {

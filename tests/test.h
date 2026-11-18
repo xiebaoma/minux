@@ -24,5 +24,6 @@ void test_printk(void);
 void test_fdt(void);
 void test_memblock(void);
 void test_buddy(void);
+void test_slab(void);
 
 #endif /* _TESTS_TEST_H */

@@ -18,6 +18,11 @@ struct page *alloc_pages(unsigned int order);
 bool free_pages(struct page *page, unsigned int order);
 u64 page_to_phys(const struct page *page);
 
+/* 返回 RAM 线性映射中的页首地址。 */
+void *page_address(const struct page *page);
+/* 查找地址所在的单页。线性映射或 RAM 范围之外返回 NULL。 */
+struct page *virt_to_page(const void *addr);
+
 u64 buddy_free_pages(void);
 u64 buddy_free_blocks(unsigned int order);
 
