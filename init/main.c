@@ -5,6 +5,7 @@
 #include <asm/trap.h>
 #include <asm/uart.h>
 #include <asm/virt.h>
+#include <minux/buddy.h>
 #include <minux/fdt.h>
 #include <minux/limits.h>
 #include <minux/memblock.h>
@@ -195,19 +196,18 @@ static void reserve_fdt_range(u64 address, u64 size)
 		address, address + size);
 }
 
-static void log_free_range(u64 start_pfn, u64 end_pfn, void *data)
+static bool log_free_range(u64 start_pfn, u64 end_pfn, void *data)
 {
-	u64 *free_pages = data;
-
-	*free_pages += end_pfn - start_pfn;
+	(void)data;
 	pr_debug("free RAM: [0x%llx, 0x%llx)\n",
 		 start_pfn * PAGE_SIZE, end_pfn * PAGE_SIZE);
+	return true;
 }
 
 void start_kernel(unsigned long hartid, unsigned long dtb_pa)
 {
 	u32 dtb_size;
-	u64 ram_pages, free_pages = 0;
+	u64 ram_pages, nr_free_pages;
 	struct virt_irq_devices irq_devices;
 	unsigned long kernel_start = (unsigned long)_kernel_start;
 	unsigned long kernel_end = (unsigned long)_kernel_end;
@@ -249,10 +249,13 @@ void start_kernel(unsigned long hartid, unsigned long dtb_pa)
 				   reserve_fdt_range))
 		panic("invalid FDT memory reservation block");
 
-	/* 从 RAM 中扣掉所有保留区，再由 log_free_range 逐段累加空闲页数。 */
-	memblock_for_each_free_range(&boot_memblock, log_free_range, &free_pages);
+	/* 保留区登记完毕，再把空闲页交给 buddy，供启动自测使用。 */
+	if (!buddy_init(&boot_memblock))
+		panic("cannot initialize buddy allocator");
+	memblock_for_each_free_range(&boot_memblock, log_free_range, NULL);
+	nr_free_pages = buddy_free_pages();
 	pr_info("memory: %llu RAM pages, %llu reserved, %llu free\n",
-		ram_pages, ram_pages - free_pages, free_pages);
+		ram_pages, ram_pages - nr_free_pages, nr_free_pages);
 
 	/* 只在 `make test` 构建时有效，普通构建下是空函数 */
 	run_selftests();

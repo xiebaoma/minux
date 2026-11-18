@@ -6,15 +6,17 @@
 struct free_ranges {
 	struct memblock_region ranges[3];
 	unsigned int count;
+	unsigned int stop_after;
 };
 
-static void capture_free_range(u64 start, u64 end, void *data)
+static bool capture_free_range(u64 start, u64 end, void *data)
 {
 	struct free_ranges *result = data;
 
 	if (result->count < 3)
 		result->ranges[result->count] = (struct memblock_region){ start, end };
 	result->count++;
+	return result->count != result->stop_after;
 }
 
 static void test_free_ranges(void)
@@ -41,6 +43,18 @@ static void test_free_ranges(void)
 	      free.ranges[1].start == 10 && free.ranges[1].end == 11 &&
 	      free.ranges[2].start == 12 && free.ranges[2].end == 13,
 	      "memblock: subtract reservations across RAM banks and holes");
+
+	free.count = 0;
+	free.stop_after = 1;
+	memblock_for_each_free_range(&map, capture_free_range, &free);
+	check(free.count == 1 && free.ranges[0].end == 5,
+	      "memblock: a visitor can stop at the end of a RAM bank");
+
+	free.count = 0;
+	free.stop_after = 2;
+	memblock_for_each_free_range(&map, capture_free_range, &free);
+	check(free.count == 2 && free.ranges[1].end == 11,
+	      "memblock: a visitor can stop before a reserved range");
 }
 
 static void test_range_limits(void)
@@ -71,8 +85,30 @@ static void test_range_limits(void)
 	      "memblock: merge existing ranges even when the table is full");
 }
 
+static void test_alloc_pages(void)
+{
+	struct memblock map = { 0 };
+	struct free_ranges free = { 0 };
+	u64 phys = ULLONG_MAX;
+
+	check(memblock_add(&map, 0, 6 * PAGE_SIZE) &&
+	      memblock_reserve(&map, 2 * PAGE_SIZE + 1, 1),
+	      "memblock: set up startup page allocation");
+	check(memblock_alloc_pages(&map, 2, &phys) && phys == 3 * PAGE_SIZE,
+	      "memblock: allocate whole pages beyond a partial-page reservation");
+	memblock_for_each_free_range(&map, capture_free_range, &free);
+	check(free.count == 2 &&
+	      free.ranges[0].start == 0 && free.ranges[0].end == 2 &&
+	      free.ranges[1].start == 5 && free.ranges[1].end == 6,
+	      "memblock: allocated pages are excluded from free ranges");
+	check(!memblock_alloc_pages(&map, 0, &phys) &&
+	      !memblock_alloc_pages(&map, 2, &phys) && phys == 3 * PAGE_SIZE,
+	      "memblock: failed startup allocation leaves the result untouched");
+}
+
 void test_memblock(void)
 {
 	test_free_ranges();
 	test_range_limits();
+	test_alloc_pages();
 }

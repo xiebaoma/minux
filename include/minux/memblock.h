@@ -27,10 +27,16 @@ extern struct memblock boot_memblock;
 bool memblock_add(struct memblock *map, u64 start, u64 size);
 bool memblock_reserve(struct memblock *map, u64 start, u64 size);
 
+/* 从可直接访问的启动 RAM 申请连续整页，成功时先保留再返回物理地址。 */
+bool memblock_alloc_pages(struct memblock *map, u64 nr_pages, u64 *phys);
+
 u64 memblock_memory_pages(const struct memblock *map);
 
-/* 按地址访问连续空闲页，[start_pfn, end_pfn) 使用物理页帧号。 */
-typedef void (*memblock_free_visitor)(u64 start_pfn, u64 end_pfn, void *data);
+/*
+ * 按地址访问连续空闲页，[start_pfn, end_pfn) 使用物理页帧号。
+ * 回调返回 true 继续遍历，返回 false 立即结束。
+ */
+typedef bool (*memblock_free_visitor)(u64 start_pfn, u64 end_pfn, void *data);
 void memblock_for_each_free_range(const struct memblock *map,
 				  memblock_free_visitor visit, void *data);
 

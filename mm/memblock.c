@@ -45,11 +45,6 @@ bool memblock_reserve(struct memblock *map, u64 start, u64 size)
 	return add_range(&map->reserved, start, size);
 }
 
-static u64 pfn_up(u64 address)
-{
-	return address / PAGE_SIZE + (address % PAGE_SIZE != 0);
-}
-
 u64 memblock_memory_pages(const struct memblock *map)
 {
 	u64 pages = 0;
@@ -84,11 +79,47 @@ void memblock_for_each_free_range(const struct memblock *map,
 				break;
 			if (res_end <= cursor)
 				continue;
-			if (cursor < res_start)
-				visit(cursor, res_start, data);
+			if (cursor < res_start && !visit(cursor, res_start, data))
+				return;
 			cursor = res_end;
 		}
-		if (cursor < end)
-			visit(cursor, end, data);
+		if (cursor < end && !visit(cursor, end, data))
+			return;
 	}
+}
+
+struct boot_page_request {
+	u64 nr_pages;
+	u64 start_pfn;
+};
+
+static bool find_boot_pages(u64 start, u64 end, void *data)
+{
+	struct boot_page_request *request = data;
+
+	/* 申请结果会用作启动期指针，因此跳过物理地址 0。 */
+	if (!start)
+		start = 1;
+	if (start >= end || request->nr_pages > end - start)
+		return true;
+	request->start_pfn = start;
+	return false;
+}
+
+bool memblock_alloc_pages(struct memblock *map, u64 nr_pages, u64 *phys)
+{
+	struct boot_page_request request = { .nr_pages = nr_pages };
+	u64 start;
+
+	if (!nr_pages)
+		return false;
+	/* 找到首个合适区间即结束遍历，再插入保留区。 */
+	memblock_for_each_free_range(map, find_boot_pages, &request);
+	if (!request.start_pfn)
+		return false;
+	start = request.start_pfn * PAGE_SIZE;
+	if (!memblock_reserve(map, start, nr_pages * PAGE_SIZE))
+		return false;
+	*phys = start;
+	return true;
 }

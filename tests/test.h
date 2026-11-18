@@ -23,5 +23,6 @@ void test_list(void);
 void test_printk(void);
 void test_fdt(void);
 void test_memblock(void);
+void test_buddy(void);
 
 #endif /* _TESTS_TEST_H */
