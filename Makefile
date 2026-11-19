@@ -25,9 +25,7 @@ CFLAGS  := -std=gnu11 -Wall -Wextra -O2 -g \
            -ffreestanding -fno-builtin -nostdlib \
            -fno-stack-protector -fno-pie -fno-omit-frame-pointer \
            -Iinclude -I$(ARCH)/include -MMD -MP
-# --no-warn-rwx-segments：代码和数据现在在同一个可读写可执行的段里。
-# 开启分页（v0.4）之前权限不起作用；到时再按页拆分各段并设置权限，去掉这个选项。
-LDFLAGS := -T $(ARCH)/kernel.ld -nostdlib --no-warn-rwx-segments
+LDFLAGS := -T $(ARCH)/kernel.ld -nostdlib
 
 # 自动收集这些目录下的源文件：新建 .c 文件后无需改 Makefile。
 # 链接顺序无所谓：_start 位于 .text.entry 段，链接脚本保证它排在最前。

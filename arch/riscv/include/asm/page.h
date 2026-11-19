@@ -6,16 +6,12 @@
 #define PAGE_SHIFT 12
 #define PAGE_SIZE  (1UL << PAGE_SHIFT)
 
-/* v0.3 尚未启用分页，RAM 使用恒等映射。 */
+/* 启动时与启用 Sv39 后，内核可访问的 RAM 使用恒等地址。 */
 static inline void *arch_phys_to_virt(u64 phys)
 {
 	return (void *)(uintptr_t)phys;
 }
 
-static inline bool arch_virt_to_phys(const void *addr, u64 *phys)
-{
-	*phys = (uintptr_t)addr;
-	return true;
-}
+bool arch_virt_to_phys(const void *addr, u64 *phys);
 
 #endif /* _ASM_RISCV_PAGE_H */

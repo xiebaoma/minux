@@ -9,13 +9,14 @@
 #include <minux/limits.h>
 #include <minux/memblock.h>
 #include <minux/page.h>
+#include <minux/paging.h>
 #include <minux/panic.h>
 #include <minux/printk.h>
 #include <minux/selftest.h>
 #include <minux/slab.h>
 #include <minux/string.h>
 
-/* kernel.ld 给出的镜像边界；当前未启用分页，链接地址就是物理地址。 */
+/* 启动镜像的物理地址边界由链接脚本给出。 */
 extern char _kernel_start[];
 extern char _kernel_end[];
 
@@ -250,7 +251,14 @@ void start_kernel(unsigned long hartid, unsigned long dtb_pa)
 				   reserve_fdt_range))
 		panic("invalid FDT memory reservation block");
 
-	/* 保留区登记完毕，再把空闲页交给 buddy，供启动自测使用。 */
+	/* 用完 DTB 后，在交给 buddy 前为启动页表保留物理页。 */
+	virt_probe_irq_devices((const void *)dtb_pa, hartid, &irq_devices);
+	const struct memblock_region mmio[] = {
+		{ irq_devices.plic_base, irq_devices.plic_base + irq_devices.plic_size },
+		{ irq_devices.uart_base, irq_devices.uart_base + irq_devices.uart_size },
+	};
+	paging_init(&boot_memblock, mmio, sizeof(mmio) / sizeof(mmio[0]));
+
 	if (!buddy_init(&boot_memblock))
 		panic("cannot initialize buddy allocator");
 	slab_init();
@@ -262,8 +270,7 @@ void start_kernel(unsigned long hartid, unsigned long dtb_pa)
 	/* 只在 `make test` 构建时有效，普通构建下是空函数 */
 	run_selftests();
 
-	/* 从设备树定位 PLIC、UART，并在打开总中断前配置好它们。 */
-	virt_probe_irq_devices((const void *)dtb_pa, hartid, &irq_devices);
+	/* 打开总中断前配置 PLIC 和 UART。 */
 	pr_info("PLIC: base=0x%lx, S context=%u; UART: base=0x%lx, IRQ=%u\n",
 		irq_devices.plic_base, irq_devices.plic_s_context,
 		irq_devices.uart_base, irq_devices.uart_irq);

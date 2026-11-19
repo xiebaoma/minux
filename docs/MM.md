@@ -1,6 +1,6 @@
 # v0.3 物理内存管理
 
-启动顺序为 FDT → memblock → buddy → slab。memblock 按物理地址区间整理可用 RAM，buddy 按页管理空闲块，slab 在这些页上分配内核对象。
+启动顺序为 FDT → memblock → 启动页表 → buddy → slab。memblock 按物理地址区间整理可用 RAM，buddy 按页管理空闲块，slab 在这些页上分配内核对象。
 
 ## memblock 与 buddy
 
@@ -18,10 +18,12 @@ buddy 为每个阶维护一条空闲链表。`order` 阶的块包含 `2^order` �
 
 ## 架构接口与使用范围
 
-每个架构提供页大小和 RAM 线性映射。buddy 用 `page_address()` 和 `virt_to_page()` 向上层提供页与地址的转换。线性映射须在 buddy 初始化前可用，保留页内偏移和块内地址的连续性，并在分配器运行期间保持有效。RISC-V v0.3 在关闭分页的状态下使用恒等映射。
+每个架构提供页大小和 RAM 线性映射。buddy 用 `page_address()` 和 `virt_to_page()` 向上层提供页与地址的转换。线性映射须在 buddy 初始化前可用，保留页内偏移和块内地址的连续性，并在分配器运行期间保持有效。
+
+RISC-V 的 `paging_init()` 从 memblock 分配并保留 Sv39 页表页，为内核镜像、可用 RAM 和设备树中探测到的 PLIC、UART 寄存器建立恒等映射。代码段可读可执行，只读数据段只可读，数据段、可用 RAM 和设备寄存器可读写。每次选用对齐且能放入当前区间的最大叶项，支持 4 KiB、2 MiB 和 1 GiB。启动代码在打开分页前完成 DTB 读取，页表启用后保留内核及页表自身所需的地址。
 
 Minux 沿用 Linux 的启动区间管理和对象分配接口命名。Linux 用 GFP 标志表达分配上下文和回收策略。v0.3 面向单 hart 的普通内核上下文，`kmalloc()` 只接收请求大小。[Linux memblock 文档](https://docs.kernel.org/6.12/core-api/boot-time-mm.html) · [Linux 内核内存分配指南](https://docs.kernel.org/6.12/core-api/memory-allocation.html)
 
 ## 验收
 
-运行 `make test` 启动 QEMU 自测内核。buddy 自测核对启动后的空闲区间与各阶块数，并验证耗尽和归还后的统计。slab 自测覆盖档位选择、满页复用、大块分配和页回收。启动日志中的 `reserved` 包含内核、DTB、固件及页描述符占用的 RAM 页。
+运行 `make test` 启动 QEMU 自测内核。Sv39 自测覆盖三级页表遍历、分配失败回滚，以及真实的缺页和权限异常。buddy 自测核对启动后的空闲区间与各阶块数，并验证耗尽和归还后的统计。slab 自测覆盖档位选择、满页复用、大块分配和页回收。启动日志中的 `reserved` 包含内核、DTB、固件、启动页表及页描述符占用的 RAM 页。
