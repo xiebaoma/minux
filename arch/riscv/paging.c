@@ -18,6 +18,11 @@ struct boot_paging {
 	struct memblock *map;
 };
 
+struct arch_pgd *arch_pgd_alloc(void)
+{
+	return sv39_alloc_user_root(kernel_root);
+}
+
 void *arch_phys_to_virt(u64 phys)
 {
 	return (void *)(uintptr_t)(kernel_root ? SV39_HIGH_START + phys : phys);

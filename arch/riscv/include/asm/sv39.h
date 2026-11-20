@@ -14,6 +14,7 @@ enum sv39_prot {
 	SV39_EXEC  = 1U << 3,
 };
 
+struct arch_pgd;
 struct memblock;
 struct sv39_table;
 
@@ -23,6 +24,7 @@ static inline u64 sv39_level_size(unsigned int level)
 }
 
 struct sv39_table *sv39_alloc_root(struct memblock *map);
+struct arch_pgd *sv39_alloc_user_root(const struct sv39_table *kernel);
 
 /* 在尚未启用的页表中填一个叶项。冲突或分配失败时保留原页表与保留区。 */
 bool sv39_map_leaf(struct sv39_table *root, struct memblock *map, uintptr_t va,

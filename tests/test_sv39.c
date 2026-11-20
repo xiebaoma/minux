@@ -1,6 +1,7 @@
 #include <asm/sv39.h>
 #include <minux/buddy.h>
 #include <minux/memblock.h>
+#include <minux/mm.h>
 #include <minux/string.h>
 #include "test.h"
 
@@ -202,10 +203,81 @@ static void test_linear_mapping(void)
 	check(free_pages(page, 0), "Sv39: release the linear mapping test page");
 }
 
+static void probe_user_root(u64 root, uintptr_t va, u8 value, bool writable)
+{
+	const unsigned long sum = 1UL << 18;
+	struct probe_result result;
+	unsigned long status;
+	bool active = sv39_enable(root);
+
+	check(active, "Sv39: switch to a user root and keep running in the high half");
+	if (!active)
+		return;
+	asm volatile("csrrc %0, sstatus, %1" : "=r"(status) : "r"(sum) : "memory");
+	result = sv39_probe_read(va);
+	check(result.cause == 13 && result.address == va,
+	      "Sv39: SUM=0 blocks supervisor loads from a user page");
+	asm volatile("csrs sstatus, %0" : : "r"(sum) : "memory");
+	result = sv39_probe_read(va);
+	check(!result.cause && *(const volatile u8 *)va == value,
+	      "Sv39: the same user address reads this root's private data");
+	result = sv39_probe_write(va);
+	check(writable ? !result.cause : result.cause == 15 && result.address == va,
+	      "Sv39: a user leaf enforces the VMA write permission");
+	result = sv39_probe_read(va + PAGE_SIZE);
+	check(result.cause == 13 && result.address == va + PAGE_SIZE,
+	      "Sv39: an unpopulated page in a VMA has no mapping");
+	asm volatile("csrw sstatus, %0" : : "r"(status) : "memory");
+}
+
+static void test_mm_paging(void)
+{
+	const uintptr_t va = 0x400000;
+	u64 before = buddy_free_pages();
+	struct mm_struct *a = mm_alloc(), *b = mm_alloc();
+	struct page *page_a, *page_b;
+	u64 root_a, root_b, boot_root;
+	unsigned long satp;
+	bool ready;
+
+	ready = a && b &&
+		mm_add_vma(a, va, va + 2 * PAGE_SIZE, VM_READ | VM_WRITE) &&
+		mm_add_vma(b, va, va + 2 * PAGE_SIZE, VM_READ) &&
+		arch_virt_to_phys(a->pgd, &root_a) && arch_virt_to_phys(b->pgd, &root_b) &&
+		root_a != root_b;
+	check(ready, "Sv39: two mm objects have distinct hardware roots and VMAs");
+	if (!ready)
+		goto out;
+
+	page_a = mm_populate_page(a, va);
+	page_b = mm_populate_page(b, va);
+	check(page_a && page_b && page_a != page_b,
+	      "Sv39: populate the same virtual page with distinct physical pages");
+	if (!page_a || !page_b || page_a == page_b)
+		goto out;
+	*(u8 *)page_address(page_a) = 0x11;
+	*(u8 *)page_address(page_b) = 0x22;
+
+	asm volatile("csrr %0, satp" : "=r"(satp));
+	boot_root = (satp & ((1UL << 44) - 1)) << PAGE_SHIFT;
+	probe_user_root(root_a, va, 0x11, true);
+	probe_user_root(root_b, va, 0x22, false);
+	ready = sv39_enable(boot_root);
+	check(ready, "Sv39: restore the boot root before destroying address spaces");
+	if (!ready)
+		return;
+
+out:
+	mm_destroy(a);
+	mm_destroy(b);
+	check(buddy_free_pages() == before, "Sv39: reclaim both private roots and their pages");
+}
+
 void test_sv39(void)
 {
 	test_walk();
 	test_allocation_failure();
 	test_active_paging();
 	test_linear_mapping();
+	test_mm_paging();
 }

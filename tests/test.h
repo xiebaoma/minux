@@ -26,5 +26,6 @@ void test_memblock(void);
 void test_buddy(void);
 void test_slab(void);
 void test_sv39(void);
+void test_mm(void);
 
 #endif /* _TESTS_TEST_H */
