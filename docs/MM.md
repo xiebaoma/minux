@@ -1,4 +1,4 @@
-# v0.3 物理内存管理
+# 内存管理
 
 启动顺序为 FDT → memblock → 启动页表 → buddy → slab。memblock 按物理地址区间整理可用 RAM，buddy 按页管理空闲块，slab 在这些页上分配内核对象。
 
@@ -20,10 +20,18 @@ buddy 为每个阶维护一条空闲链表。`order` 阶的块包含 `2^order` �
 
 每个架构提供页大小和 RAM 线性映射。buddy 用 `page_address()` 和 `virt_to_page()` 向上层提供页与地址的转换。线性映射须在 buddy 初始化前可用，保留页内偏移和块内地址的连续性，并在分配器运行期间保持有效。
 
+Minux 沿用 Linux 的启动区间管理和对象分配接口命名。Linux 用 GFP 标志表达分配上下文和回收策略。v0.3 面向单 hart 的普通内核上下文，`kmalloc()` 只接收请求大小。[Linux memblock 文档](https://docs.kernel.org/6.12/core-api/boot-time-mm.html) · [Linux 内核内存分配指南](https://docs.kernel.org/6.12/core-api/memory-allocation.html)
+
+## v0.4 虚拟内存
+
 RISC-V 的 `paging_init()` 从 memblock 分配并保留 Sv39 页表页，为内核镜像、可用 RAM 和设备树中探测到的 PLIC、UART 寄存器建立高半区映射。代码段可读可执行，只读数据段只可读，数据段、可用 RAM 和设备寄存器可读写。每次选用虚实地址均对齐且能放入当前区间的最大叶项，支持 4 KiB、2 MiB 和 1 GiB。启动代码在打开分页前完成 DTB 读取，切换到高地址的代码、栈和异常入口后撤销临时恒等映射。
 
-Minux 沿用 Linux 的启动区间管理和对象分配接口命名。Linux 用 GFP 标志表达分配上下文和回收策略。v0.3 面向单 hart 的普通内核上下文，`kmalloc()` 只接收请求大小。[Linux memblock 文档](https://docs.kernel.org/6.12/core-api/boot-time-mm.html) · [Linux 内核内存分配指南](https://docs.kernel.org/6.12/core-api/memory-allocation.html)
+每个 `mm_struct` 持有独立的根页表和一条按地址排序的 VMA 链表。`mm_alloc()` 通过架构接口从 buddy 分配根表。Sv39 后端复制启动根表的高半区表项，使内核子页表在各地址空间之间共享。低半区从空表开始，用户映射使用 4 KiB 页。
+
+`mm_add_vma()` 登记页对齐的 `[vm_start, vm_end)` 区间和访问权限，允许区间相邻，拒绝重叠。`find_vma()` 返回第一个满足 `addr < vm_end` 的 VMA，调用者通过 `vm_start <= addr` 判断地址是否在该区间内。Minux 沿用 Linux 的查找语义，用有序链表管理首版的 VMA。 [Linux 地址空间文档](https://docs.kernel.org/6.13/mm/process_addrs.html)
+
+`mm_populate_page()` 在 VMA 内为指定虚拟页分配并清零数据页，再由 Sv39 后端将权限编码到用户叶项。缺失的子页表按需分配，分配失败时归还本次取得的数据页和子表。`mm_destroy()` 遍历低半区，归还私有数据页、子表和根表，再释放 VMA 对象。v0.4 由调用者在地址空间未启用时显式建立映射和执行销毁。按需缺页处理列入 [v0.6 路线图](ROADMAP.md)。
 
 ## 验收
 
-运行 `make test` 启动 QEMU 自测内核。Sv39 自测覆盖三级页表遍历、分配失败回滚，以及真实的缺页和权限异常。buddy 自测核对启动后的空闲区间与各阶块数，并验证耗尽和归还后的统计。slab 自测覆盖档位选择、满页复用、大块分配和页回收。启动日志中的 `reserved` 包含内核、DTB、固件、启动页表及页描述符占用的 RAM 页。
+运行 `make test` 启动 QEMU 自测内核。Sv39 和地址空间自测覆盖三级页表遍历、VMA 边界、分配失败回滚和私有页回收，并实际切换两张根表，验证同一个用户地址可以映射到不同的数据页，以及无映射和权限违规会触发缺页异常。buddy 自测核对启动后的空闲区间与各阶块数，并验证耗尽和归还后的统计。slab 自测覆盖档位选择、满页复用、大块分配和页回收。启动日志中的 `reserved` 包含内核、DTB、固件、启动页表及页描述符占用的 RAM 页。
