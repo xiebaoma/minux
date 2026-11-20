@@ -6,6 +6,7 @@
 #define SV39_LEVELS 3
 #define SV39_VPN_BITS 9
 #define SV39_LOW_END (1UL << (PAGE_SHIFT + SV39_LEVELS * SV39_VPN_BITS - 1))
+#define SV39_HIGH_START (-SV39_LOW_END)
 
 enum sv39_prot {
 	SV39_READ  = 1U << 1,
@@ -29,6 +30,7 @@ bool sv39_map_leaf(struct sv39_table *root, struct memblock *map, uintptr_t va,
 /* 解析页内的任意字节地址，pa 和 prot 均可传 NULL。 */
 bool sv39_lookup(const struct sv39_table *root, uintptr_t va, u64 *pa,
 		 unsigned int *prot);
-bool sv39_enable(const struct sv39_table *root);
+bool sv39_enable(u64 root_pa);
+void sv39_clear_low_half(struct sv39_table *root);
 
 #endif /* _ASM_RISCV_SV39_H */

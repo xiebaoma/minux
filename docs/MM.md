@@ -20,7 +20,7 @@ buddy 为每个阶维护一条空闲链表。`order` 阶的块包含 `2^order` �
 
 每个架构提供页大小和 RAM 线性映射。buddy 用 `page_address()` 和 `virt_to_page()` 向上层提供页与地址的转换。线性映射须在 buddy 初始化前可用，保留页内偏移和块内地址的连续性，并在分配器运行期间保持有效。
 
-RISC-V 的 `paging_init()` 从 memblock 分配并保留 Sv39 页表页，为内核镜像、可用 RAM 和设备树中探测到的 PLIC、UART 寄存器建立恒等映射。代码段可读可执行，只读数据段只可读，数据段、可用 RAM 和设备寄存器可读写。每次选用对齐且能放入当前区间的最大叶项，支持 4 KiB、2 MiB 和 1 GiB。启动代码在打开分页前完成 DTB 读取，页表启用后保留内核及页表自身所需的地址。
+RISC-V 的 `paging_init()` 从 memblock 分配并保留 Sv39 页表页，为内核镜像、可用 RAM 和设备树中探测到的 PLIC、UART 寄存器建立高半区映射。代码段可读可执行，只读数据段只可读，数据段、可用 RAM 和设备寄存器可读写。每次选用虚实地址均对齐且能放入当前区间的最大叶项，支持 4 KiB、2 MiB 和 1 GiB。启动代码在打开分页前完成 DTB 读取，切换到高地址的代码、栈和异常入口后撤销临时恒等映射。
 
 Minux 沿用 Linux 的启动区间管理和对象分配接口命名。Linux 用 GFP 标志表达分配上下文和回收策略。v0.3 面向单 hart 的普通内核上下文，`kmalloc()` 只接收请求大小。[Linux memblock 文档](https://docs.kernel.org/6.12/core-api/boot-time-mm.html) · [Linux 内核内存分配指南](https://docs.kernel.org/6.12/core-api/memory-allocation.html)
 

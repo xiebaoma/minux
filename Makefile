@@ -25,7 +25,8 @@ CFLAGS  := -std=gnu11 -Wall -Wextra -O2 -g \
            -ffreestanding -fno-builtin -nostdlib \
            -fno-stack-protector -fno-pie -fno-omit-frame-pointer \
            -Iinclude -I$(ARCH)/include -MMD -MP
-LDFLAGS := -T $(ARCH)/kernel.ld -nostdlib
+# 分页前按物理地址执行高地址链接的代码，保留 PC 相对寻址。
+LDFLAGS := -T $(ARCH)/kernel.ld -nostdlib --no-relax
 
 # 自动收集这些目录下的源文件：新建 .c 文件后无需改 Makefile。
 # 链接顺序无所谓：_start 位于 .text.entry 段，链接脚本保证它排在最前。

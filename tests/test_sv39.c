@@ -1,4 +1,5 @@
 #include <asm/sv39.h>
+#include <minux/buddy.h>
 #include <minux/memblock.h>
 #include <minux/string.h>
 #include "test.h"
@@ -33,7 +34,7 @@ static void test_walk(void)
 	struct sv39_table *root = test_root(&map, 4);
 	const uintptr_t va_4k = 0x1000;
 	const uintptr_t va_2m = 0x200000;
-	const uintptr_t va_1g = -SV39_LOW_END;
+	const uintptr_t va_1g = SV39_HIGH_START;
 	const u64 pa_4k = (1ULL << 56) - PAGE_SIZE;
 	const u64 pa_2m = 0x80400000;
 	const u64 pa_1g = 0x80000000;
@@ -112,6 +113,7 @@ extern struct probe_result sv39_probe_read(uintptr_t addr);
 extern struct probe_result sv39_probe_write(uintptr_t addr);
 extern struct probe_result sv39_probe_exec(uintptr_t addr);
 extern char _kernel_start[];
+extern void riscv_trap_entry(void);
 
 static const u32 rodata_word = 0x12345678;
 static volatile u32 data_word = 0x00008067; /* jalr zero, 0(ra) */
@@ -131,26 +133,44 @@ static bool boot_page_reserved(u64 phys)
 
 static void test_active_paging(void)
 {
-	const uintptr_t hole = PAGE_SIZE;
+	const uintptr_t hole = SV39_HIGH_START + PAGE_SIZE;
+	const uintptr_t old_text = 0x80200000;
 	const uintptr_t rodata = (uintptr_t)&rodata_word;
 	const uintptr_t data = (uintptr_t)&data_word;
 	const uintptr_t text = (uintptr_t)_kernel_start;
 	struct probe_result result;
 	unsigned long satp;
+	uintptr_t pc, sp, stvec;
 	u64 root, phys;
 
 	asm volatile("csrr %0, satp" : "=r"(satp));
 	check(satp >> 60 == 8, "Sv39: hardware is using Sv39");
+	asm volatile("auipc %0, 0\n\t"
+		     "mv %1, sp\n\t"
+		     "csrr %2, stvec"
+		     : "=r"(pc), "=r"(sp), "=r"(stvec));
+	check(pc >= SV39_HIGH_START && sp >= SV39_HIGH_START,
+	      "Sv39: execution and the kernel stack use high addresses");
+	check(stvec >= SV39_HIGH_START && stvec == (uintptr_t)riscv_trap_entry,
+	      "Sv39: the active trap entry uses its high address");
+	check(text >= SV39_HIGH_START && arch_virt_to_phys((const void *)text, &phys) &&
+	      phys == old_text,
+	      "Sv39: high kernel text maps to the physical boot address");
 	root = (satp & ((1UL << 44) - 1)) << PAGE_SHIFT;
-	check(root && arch_virt_to_phys((void *)(uintptr_t)root, &phys) &&
+	check(root && arch_virt_to_phys(arch_phys_to_virt(root), &phys) &&
 	      phys == root && boot_page_reserved(root),
-	      "Sv39: root is mapped and reserved from buddy");
+	      "Sv39: root is accessible at a high address and reserved from buddy");
+	check(!arch_virt_to_phys((void *)old_text, &phys),
+	      "Sv39: the boot identity mapping is gone");
 	check(!arch_virt_to_phys((void *)hole, &phys),
 	      "Sv39: a hole does not translate through the kernel mapping");
 
 	result = sv39_probe_read(hole);
 	check(result.cause == 13 && result.address == hole,
 	      "Sv39: loading from an unmapped page raises a load page fault");
+	result = sv39_probe_read(old_text);
+	check(result.cause == 13 && result.address == old_text,
+	      "Sv39: the former low kernel address raises a load page fault");
 	result = sv39_probe_write(text);
 	check(result.cause == 15 && result.address == text,
 	      "Sv39: writing kernel text raises a store page fault");
@@ -164,9 +184,28 @@ static void test_active_paging(void)
 	      "Sv39: executing kernel data raises an instruction page fault");
 }
 
+static void test_linear_mapping(void)
+{
+	struct page *page = alloc_pages(0);
+	u8 *addr;
+	u64 phys;
+
+	check(page != NULL, "Sv39: allocate a RAM page for the linear mapping test");
+	if (!page)
+		return;
+	addr = (u8 *)page_address(page) + PAGE_SIZE - 1;
+	check((uintptr_t)addr >= SV39_HIGH_START &&
+	      arch_virt_to_phys(addr, &phys) &&
+	      phys == page_to_phys(page) + PAGE_SIZE - 1 &&
+	      virt_to_page(addr) == page,
+	      "Sv39: a buddy page uses the high mapping and retains its page offset");
+	check(free_pages(page, 0), "Sv39: release the linear mapping test page");
+}
+
 void test_sv39(void)
 {
 	test_walk();
 	test_allocation_failure();
 	test_active_paging();
+	test_linear_mapping();
 }

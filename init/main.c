@@ -16,10 +16,6 @@
 #include <minux/slab.h>
 #include <minux/string.h>
 
-/* 启动镜像的物理地址边界由链接脚本给出。 */
-extern char _kernel_start[];
-extern char _kernel_end[];
-
 /* 设备树规范规定：父节点没有写这两个属性时，默认分别为 2 和 1。 */
 static u32 root_address_cells = 2;
 static u32 root_size_cells = 1;
@@ -31,6 +27,7 @@ static bool current_root_child_is_cpus;
 static bool reserved_available;
 static bool reserved_needs_translation;
 static u32 timebase_frequency;
+static struct virt_irq_devices irq_devices;
 
 static struct memory_node {
 	const char *name;
@@ -206,13 +203,12 @@ static bool log_free_range(u64 start_pfn, u64 end_pfn, void *data)
 	return true;
 }
 
-void start_kernel(unsigned long hartid, unsigned long dtb_pa)
+static void start_kernel_mapped(void) __noreturn;
+
+void start_kernel(unsigned long hartid, unsigned long dtb_pa,
+		  unsigned long kernel_start, unsigned long kernel_end)
 {
 	u32 dtb_size;
-	u64 ram_pages, nr_free_pages;
-	struct virt_irq_devices irq_devices;
-	unsigned long kernel_start = (unsigned long)_kernel_start;
-	unsigned long kernel_end = (unsigned long)_kernel_end;
 
 	/* 尽早安装 trap 入口，使后续启动故障可以报告现场。 */
 	trap_init();
@@ -238,8 +234,7 @@ void start_kernel(unsigned long hartid, unsigned long dtb_pa)
 	if (!fdt_walk((const void *)dtb_pa, scan_fdt_node, scan_fdt_property,
 		      finish_fdt_node))
 		panic("invalid FDT structure");
-	ram_pages = memblock_memory_pages(&boot_memblock);
-	if (!ram_pages)
+	if (!memblock_memory_pages(&boot_memblock))
 		panic("no full physical RAM pages in FDT");
 	if (!timebase_frequency)
 		panic("no /cpus/timebase-frequency in FDT");
@@ -257,7 +252,14 @@ void start_kernel(unsigned long hartid, unsigned long dtb_pa)
 		{ irq_devices.plic_base, irq_devices.plic_base + irq_devices.plic_size },
 		{ irq_devices.uart_base, irq_devices.uart_base + irq_devices.uart_size },
 	};
-	paging_init(&boot_memblock, mmio, sizeof(mmio) / sizeof(mmio[0]));
+	paging_init(&boot_memblock, mmio, sizeof(mmio) / sizeof(mmio[0]),
+		    start_kernel_mapped);
+}
+
+static void start_kernel_mapped(void)
+{
+	u64 ram_pages = memblock_memory_pages(&boot_memblock);
+	u64 nr_free_pages;
 
 	if (!buddy_init(&boot_memblock))
 		panic("cannot initialize buddy allocator");

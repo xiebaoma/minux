@@ -1,3 +1,4 @@
+#include <asm/page.h>
 #include <asm/plic.h>
 #include <asm/uart.h>
 
@@ -40,7 +41,7 @@ static void uart_putc(u8 ch)
 
 void uart_init(const struct virt_irq_devices *devices)
 {
-	uart_base = devices->uart_base;
+	uart_base = (uintptr_t)arch_phys_to_virt(devices->uart_base);
 	uart_irq = devices->uart_irq;
 
 	/* 保留 OpenSBI 设置的波特率，清 DLAB 后偏移 1 才是 IER。 */

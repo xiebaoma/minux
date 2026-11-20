@@ -23,7 +23,7 @@ _Static_assert(sizeof(struct sv39_table) == PAGE_SIZE,
 
 static bool canonical(uintptr_t va)
 {
-	return va < SV39_LOW_END || va >= -SV39_LOW_END;
+	return va < SV39_LOW_END || va >= SV39_HIGH_START;
 }
 
 static unsigned int vpn_index(uintptr_t va, unsigned int level)
@@ -140,19 +140,23 @@ bool sv39_lookup(const struct sv39_table *root, uintptr_t va, u64 *pa,
 	return false;
 }
 
-bool sv39_enable(const struct sv39_table *root)
+bool sv39_enable(u64 root_pa)
 {
-	u64 phys;
 	unsigned long satp, active;
 
-	if (!root || !arch_virt_to_phys(root, &phys) || phys >= SV39_PA_END ||
-	    (phys & (PAGE_SIZE - 1)))
+	if (root_pa >= SV39_PA_END || (root_pa & (PAGE_SIZE - 1)))
 		return false;
-	satp = SATP_MODE_SV39 | (phys >> PAGE_SHIFT);
+	satp = SATP_MODE_SV39 | (root_pa >> PAGE_SHIFT);
 	asm volatile("sfence.vma\n\t"
 		     "csrw satp, %1\n\t"
 		     "sfence.vma\n\t"
 		     "csrr %0, satp"
 		     : "=r"(active) : "r"(satp) : "memory");
 	return active == satp;
+}
+
+void sv39_clear_low_half(struct sv39_table *root)
+{
+	memset(root->entries, 0, sizeof(root->entries) / 2);
+	asm volatile("sfence.vma" : : : "memory");
 }

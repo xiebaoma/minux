@@ -1,6 +1,7 @@
 // platform-level interrupt controller
 
 #include <asm/plic.h>
+#include <asm/page.h>
 #include <minux/panic.h>
 
 #define PLIC_PRIORITY       0x000000UL
@@ -33,7 +34,7 @@ static u32 context_offset(void)
 
 void plic_init(const struct virt_irq_devices *devices)
 {
-	plic_base = devices->plic_base;
+	plic_base = (uintptr_t)arch_phys_to_virt(devices->plic_base);
 	plic_size = devices->plic_size;
 	plic_context = devices->plic_s_context;
 	plic_ndev = devices->plic_ndev;
