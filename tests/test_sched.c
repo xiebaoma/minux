@@ -19,6 +19,46 @@ static void schedule_probe_entry(void *arg)
 	}
 }
 
+struct exit_probe {
+	u64 free_with_tasks;
+	unsigned int entries;
+};
+
+static void exit_probe_entry(void *arg)
+{
+	struct exit_probe *probe = arg;
+
+	if (probe->entries == 1)
+		check(buddy_free_pages() >= probe->free_with_tasks + (1UL << TASK_STACK_ORDER),
+		      "sched: a new task reaps its predecessor's stack before entering");
+	probe->entries++;
+}
+
+static void test_task_exit(void)
+{
+	struct task_struct *boot = task_current();
+	u64 free_before = buddy_free_pages();
+
+	for (unsigned int round = 0; round < 3; round++) {
+		struct exit_probe probe = { 0 };
+		struct task_struct *first = task_create(exit_probe_entry, &probe);
+		struct task_struct *second = task_create(exit_probe_entry, &probe);
+
+		check(first && second, "sched: create tasks that return from their entries");
+		if (!first || !second) {
+			task_destroy(first);
+			task_destroy(second);
+			return;
+		}
+		probe.free_with_tasks = buddy_free_pages();
+		schedule();
+		check(task_current() == boot && probe.entries == 2,
+		      "sched: both entries return and boot resumes");
+		check(buddy_free_pages() == free_before,
+		      "sched: the resumed boot task reaps the last task, returning all pages");
+	}
+}
+
 void test_sched(void)
 {
 	struct task_struct *boot = task_current();
@@ -53,4 +93,5 @@ void test_sched(void)
 	schedule();
 	check(task_current() == boot && buddy_free_pages() == free_before,
 	      "sched: cleanup leaves an empty run queue and returns the task pages");
+	test_task_exit();
 }

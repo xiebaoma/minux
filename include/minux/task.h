@@ -12,6 +12,7 @@ struct page;
 enum task_state {
 	TASK_RUNNING,
 	TASK_RUNNABLE,
+	TASK_DEAD,
 };
 
 struct task_struct {
@@ -27,9 +28,9 @@ struct task_struct {
 void task_init(void);
 struct task_struct *task_current(void);
 
-/* 新任务加入运行队列，首次切入时调用 entry(arg)，入口返回会触发 panic。 */
+/* 新任务入队并在首次切入时调用 entry(arg)。入口须在关中断时返回，返回后自动回收。 */
 struct task_struct *task_create(void (*entry)(void *), void *arg);
-/* 调用者负责停止使用该任务。当前任务和启动任务均不可销毁。 */
+/* 销毁队列中尚未退出的任务。调用者须确保任务指针仍然有效。 */
 bool task_destroy(struct task_struct *task);
 
 /* 单 hart，调用者须在普通内核上下文关闭本地中断后主动切换。 */
