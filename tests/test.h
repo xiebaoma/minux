@@ -28,5 +28,6 @@ void test_slab(void);
 void test_sv39(void);
 void test_mm(void);
 void test_task(void);
+void test_sched(void);
 
 #endif /* _TESTS_TEST_H */

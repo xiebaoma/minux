@@ -7,10 +7,13 @@
 
 static struct task_struct boot_task;
 static struct task_struct *current_task;
+/* 按 FIFO 排列可运行的任务，当前任务在切出时才加入队尾。 */
+static LIST_HEAD(run_queue);
 
 void task_init(void)
 {
 	boot_task.state = TASK_RUNNING;
+	INIT_LIST_HEAD(&boot_task.run_list);
 	current_task = &boot_task;
 }
 
@@ -51,6 +54,7 @@ struct task_struct *task_create(void (*entry)(void *), void *arg)
 	task->state = TASK_RUNNABLE;
 	task->entry = entry;
 	task->arg = arg;
+	list_add_tail(&task->run_list, &run_queue);
 	return task;
 }
 
@@ -58,6 +62,7 @@ bool task_destroy(struct task_struct *task)
 {
 	if (!task || task == current_task || task == &boot_task)
 		return false;
+	list_del(&task->run_list);
 	BUG_ON(!free_pages(task->stack_page, TASK_STACK_ORDER));
 	kfree(task);
 	return true;
@@ -72,8 +77,17 @@ void task_switch(struct task_struct *next)
 		return;
 	BUG_ON(next->state != TASK_RUNNABLE || !next->context);
 
+	list_del_init(&next->run_list);
 	prev->state = TASK_RUNNABLE;
+	list_add_tail(&prev->run_list, &run_queue);
 	next->state = TASK_RUNNING;
 	current_task = next;
 	arch_switch_to(&prev->context, next->context);
+}
+
+void schedule(void)
+{
+	if (list_empty(&run_queue))
+		return;
+	task_switch(list_first_entry(&run_queue, struct task_struct, run_list));
 }
