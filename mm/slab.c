@@ -1,6 +1,7 @@
 #include <minux/buddy.h>
 #include <minux/page.h>
 #include <minux/slab.h>
+#include <minux/spinlock.h>
 #include <minux/string.h>
 #include "page_internal.h"
 
@@ -36,6 +37,8 @@ _Static_assert(sizeof(struct free_object) <= SLAB_MIN_SIZE,
 
 static struct kmalloc_cache caches[SLAB_MAX_SHIFT - SLAB_MIN_SHIFT + 1];
 static bool slab_ready;
+/* 保护缓存和 slab 页的元数据，需要分配或归还页时再取得 buddy 锁。 */
+static struct spinlock slab_lock = SPINLOCK_INIT;
 
 void slab_init(void)
 {
@@ -95,17 +98,12 @@ static void *alloc_large(size_t size)
 	return page_address(page);
 }
 
-void *kmalloc(size_t size)
+static void *alloc_small(size_t size)
 {
 	struct kmalloc_cache *cache = caches;
 	struct slab *slab;
 	struct free_object *object;
 	unsigned int slot;
-
-	if (!slab_ready || !size)
-		return NULL;
-	if (size > SLAB_MAX_SIZE)
-		return alloc_large(size);
 
 	while (cache->size < size)
 		cache++;
@@ -125,6 +123,22 @@ void *kmalloc(size_t size)
 	if (!slab->freelist)
 		list_del(&slab->link);
 	return object;
+}
+
+void *kmalloc(size_t size)
+{
+	unsigned long flags;
+	void *ptr;
+
+	if (!slab_ready || !size)
+		return NULL;
+	flags = spin_lock_irqsave(&slab_lock);
+	if (size > SLAB_MAX_SIZE)
+		ptr = alloc_large(size);
+	else
+		ptr = alloc_small(size);
+	spin_unlock_irqrestore(&slab_lock, flags);
+	return ptr;
 }
 
 void *kzalloc(size_t size)
@@ -167,17 +181,24 @@ static void free_object(struct page *page, struct slab *slab, const void *ptr)
 void kfree(const void *ptr)
 {
 	struct page *page;
+	unsigned long flags;
 	void *base;
 
 	if (!ptr)
 		return;
 	page = virt_to_page(ptr);
-	if (!page || page->state != PAGE_ALLOCATED_HEAD)
+	if (!page)
 		return;
 
+	flags = spin_lock_irqsave(&slab_lock);
+	if (page->state != PAGE_ALLOCATED_HEAD)
+		goto out_unlock;
 	base = page_address(page);
 	if (page->owner == PAGE_OWNER_SLAB)
 		free_object(page, base, ptr);
 	else if (page->owner == PAGE_OWNER_KMALLOC && ptr == base)
 		free_pages(page, page->order);
+
+out_unlock:
+	spin_unlock_irqrestore(&slab_lock, flags);
 }

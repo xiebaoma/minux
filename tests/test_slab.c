@@ -1,4 +1,6 @@
+#include <asm/trap.h>
 #include <minux/buddy.h>
+#include <minux/irq.h>
 #include <minux/limits.h>
 #include <minux/page.h>
 #include <minux/slab.h>
@@ -109,6 +111,38 @@ static void test_large_allocations(void)
 	}
 }
 
+static void test_irq_restore(void)
+{
+	const size_t sizes[] = { 16, PAGE_SIZE };
+	unsigned long initial_flags = arch_local_irq_save();
+	u64 before = buddy_free_pages();
+
+	for (unsigned int enabled = 0; enabled < 2; enabled++) {
+		unsigned long expected;
+
+		/* 此时设备中断尚未初始化，可临时打开总开关。 */
+		if (enabled)
+			trap_enable_interrupts();
+		expected = arch_local_irq_save();
+		arch_local_irq_restore(expected);
+
+		for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+			void *ptr = kmalloc(sizes[i]);
+			unsigned long flags = arch_local_irq_save();
+
+			arch_local_irq_restore(expected);
+			check(ptr && flags == expected && buddy_free_pages() + 1 == before,
+			      "slab: taking a buddy page preserves IRQ state");
+			kfree(ptr);
+			flags = arch_local_irq_save();
+			arch_local_irq_restore(expected);
+			check(flags == expected && buddy_free_pages() == before,
+			      "slab: returning a buddy page preserves IRQ state");
+		}
+	}
+	arch_local_irq_restore(initial_flags);
+}
+
 void test_slab(void)
 {
 	u64 blocks[BUDDY_MAX_ORDER + 1];
@@ -131,6 +165,7 @@ void test_slab(void)
 	test_small_classes();
 	test_reuse();
 	test_large_allocations();
+	test_irq_restore();
 	for (unsigned int order = 0; order <= BUDDY_MAX_ORDER; order++)
 		restored &= blocks[order] == buddy_free_blocks(order);
 	check(restored, "slab: buddy free blocks return to their original counts at every order");
