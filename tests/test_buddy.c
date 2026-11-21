@@ -1,4 +1,6 @@
+#include <asm/trap.h>
 #include <minux/buddy.h>
+#include <minux/irq.h>
 #include <minux/memblock.h>
 #include <minux/page.h>
 #include <minux/slab.h>
@@ -149,6 +151,45 @@ static void test_exhaustion(const struct free_layout *layout)
 	      "buddy: a former order-0 head is rejected after becoming a block tail");
 }
 
+static bool irq_state_preserved(unsigned long expected)
+{
+	unsigned long flags = arch_local_irq_save();
+
+	arch_local_irq_restore(expected);
+	return flags == expected;
+}
+
+static void test_irq_restore(const struct free_layout *layout)
+{
+	unsigned long initial_flags = arch_local_irq_save();
+
+	for (unsigned int enabled = 0; enabled < 2; enabled++) {
+		struct page *page;
+		unsigned long flags;
+		bool rejected, freed;
+		u64 pages;
+
+		/* 启动自测在设备中断初始化前运行，可临时打开总开关。 */
+		if (enabled)
+			trap_enable_interrupts();
+		flags = arch_local_irq_save();
+		arch_local_irq_restore(flags);
+
+		page = alloc_pages(0);
+		check(irq_state_preserved(flags) && page, "buddy: allocation preserves IRQ state");
+		rejected = !free_pages(page, 1);
+		check(irq_state_preserved(flags) && rejected, "buddy: wrong-order free preserves IRQ state");
+		freed = free_pages(page, 0);
+		check(irq_state_preserved(flags) && freed, "buddy: free preserves IRQ state");
+		pages = buddy_free_pages();
+		check(irq_state_preserved(flags) && pages == layout->pages,
+		      "buddy: free-page count preserves IRQ state and matches the initial layout");
+		buddy_free_blocks(0);
+		check(irq_state_preserved(flags), "buddy: free-block count preserves IRQ state");
+	}
+	arch_local_irq_restore(initial_flags);
+}
+
 void test_buddy(void)
 {
 	struct free_layout layout = { 0 };
@@ -158,4 +199,5 @@ void test_buddy(void)
 	      "buddy: initial blocks cover exactly the post-reservation free ranges");
 	test_block(&layout);
 	test_exhaustion(&layout);
+	test_irq_restore(&layout);
 }

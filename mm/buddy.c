@@ -2,6 +2,7 @@
 #include <minux/limits.h>
 #include <minux/memblock.h>
 #include <minux/page.h>
+#include <minux/spinlock.h>
 #include "page_internal.h"
 
 /* 每段只为实际存在的页建描述符，段之间的物理地址空洞不占空间。 */
@@ -20,6 +21,8 @@ static struct page *page_map;
 static u64 page_map_bytes;
 static struct page_bank banks[MEMBLOCK_MAX_REGIONS];
 static unsigned int nr_banks;
+/* 初始化完成后，锁保护空闲链表、块计数和页块状态。 */
+static struct spinlock buddy_lock = SPINLOCK_INIT;
 static struct free_area free_areas[BUDDY_MAX_ORDER + 1];
 
 static const struct page_bank *find_bank(u64 pfn)
@@ -108,14 +111,16 @@ bool buddy_init(struct memblock *map)
 struct page *alloc_pages(unsigned int order)
 {
 	unsigned int current = order;
-	struct page *page;
+	struct page *page = NULL;
+	unsigned long flags;
 
 	if (!page_map || order > BUDDY_MAX_ORDER)
 		return NULL;
+	flags = spin_lock_irqsave(&buddy_lock);
 	while (current <= BUDDY_MAX_ORDER && list_empty(&free_areas[current].blocks))
 		current++;
 	if (current > BUDDY_MAX_ORDER)
-		return NULL;
+		goto out_unlock;
 
 	page = list_first_entry(&free_areas[current].blocks, struct page, buddy_link);
 	remove_free_block(page);
@@ -127,6 +132,9 @@ struct page *alloc_pages(unsigned int order)
 	page->state = PAGE_ALLOCATED_HEAD;
 	page->order = order;
 	page->owner = PAGE_OWNER_BUDDY;
+
+out_unlock:
+	spin_unlock_irqrestore(&buddy_lock, flags);
 	return page;
 }
 
@@ -135,13 +143,16 @@ bool free_pages(struct page *page, unsigned int order)
 	uintptr_t base = (uintptr_t)page_map;
 	uintptr_t addr = (uintptr_t)page;
 	const struct page_bank *bank;
+	unsigned long flags;
+	bool freed = false;
 
 	/* 先验证描述符的地址，再读取块状态，失败时链表不变。 */
 	if (order > BUDDY_MAX_ORDER || addr < base || addr - base >= page_map_bytes ||
 	    (addr - base) % sizeof(*page))
 		return false;
+	flags = spin_lock_irqsave(&buddy_lock);
 	if (page->state != PAGE_ALLOCATED_HEAD || page->order != order)
-		return false;
+		goto out_unlock;
 	bank = find_bank(page->pfn);
 	page->state = PAGE_BLOCK_TAIL;
 
@@ -161,7 +172,11 @@ bool free_pages(struct page *page, unsigned int order)
 		order++;
 	}
 	add_free_block(page, order);
-	return true;
+	freed = true;
+
+out_unlock:
+	spin_unlock_irqrestore(&buddy_lock, flags);
+	return freed;
 }
 
 u64 page_to_phys(const struct page *page)
@@ -189,13 +204,23 @@ struct page *virt_to_page(const void *addr)
 u64 buddy_free_pages(void)
 {
 	u64 pages = 0;
+	unsigned long flags = spin_lock_irqsave(&buddy_lock);
 
 	for (unsigned int order = 0; order <= BUDDY_MAX_ORDER; order++)
-		pages += buddy_free_blocks(order) << order;
+		pages += free_areas[order].nr_blocks << order;
+	spin_unlock_irqrestore(&buddy_lock, flags);
 	return pages;
 }
 
 u64 buddy_free_blocks(unsigned int order)
 {
-	return order <= BUDDY_MAX_ORDER ? free_areas[order].nr_blocks : 0;
+	unsigned long flags;
+	u64 blocks;
+
+	if (order > BUDDY_MAX_ORDER)
+		return 0;
+	flags = spin_lock_irqsave(&buddy_lock);
+	blocks = free_areas[order].nr_blocks;
+	spin_unlock_irqrestore(&buddy_lock, flags);
+	return blocks;
 }
