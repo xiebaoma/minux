@@ -132,10 +132,13 @@ void task_switch(struct task_struct *next)
 
 void schedule(void)
 {
+	unsigned long flags = arch_local_irq_save();
+
 	if (!list_empty(&run_queue))
 		task_switch(list_first_entry(&run_queue, struct task_struct, run_list));
 	else if (idle_task && current_task->state == TASK_DEAD)
 		task_switch(idle_task);
+	arch_local_irq_restore(flags);
 }
 
 void task_idle_once(void)

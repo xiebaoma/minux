@@ -38,7 +38,10 @@ bool task_destroy(struct task_struct *task);
 
 /* 单 hart，调用者须在普通内核上下文关闭本地中断后主动切换。 */
 void task_switch(struct task_struct *next);
-/* 同样在关中断的普通内核上下文调用。无任务可选时，已退出任务切到 idle。 */
+/*
+ * 在普通内核上下文调度，切回后恢复调用时的本地中断状态。
+ * 无任务可选时，已退出任务切到 idle。
+ */
 void schedule(void);
 
 /* 启动任务进入 idle 后反复调用，每次派发任务或等待一次中断。 */

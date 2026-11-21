@@ -1,4 +1,6 @@
+#include <asm/trap.h>
 #include <minux/buddy.h>
+#include <minux/irq.h>
 #include <minux/task.h>
 #include "test.h"
 
@@ -17,6 +19,58 @@ static void schedule_probe_entry(void *arg)
 		(*probe->progress)++;
 		schedule();
 	}
+}
+
+struct irq_schedule_probe {
+	unsigned long disabled_flags;
+	unsigned long enabled_flags;
+	bool completed;
+};
+
+static void irq_schedule_probe_entry(void *arg)
+{
+	struct irq_schedule_probe *probe = arg;
+	unsigned long flags = arch_local_irq_save();
+
+	check(flags == probe->disabled_flags, "sched: switches to a new task with IRQs disabled");
+	schedule();
+	flags = arch_local_irq_save();
+	check(flags == probe->disabled_flags, "sched: resuming a task preserves its disabled IRQ state");
+
+	arch_local_irq_restore(probe->enabled_flags);
+	schedule();
+	flags = arch_local_irq_save();
+	check(flags == probe->enabled_flags, "sched: resuming a task restores its enabled IRQ state");
+	probe->completed = true;
+}
+
+static void test_schedule_irq_restore(void)
+{
+	struct irq_schedule_probe probe = { 0 };
+	struct task_struct *worker = task_create(irq_schedule_probe_entry, &probe);
+	unsigned long flags;
+
+	check(worker != NULL, "sched: create a task to check IRQ state across switches");
+	if (!worker)
+		return;
+
+	probe.disabled_flags = arch_local_irq_save();
+	/* 启动自测在设备中断初始化前运行。 */
+	trap_enable_interrupts();
+	probe.enabled_flags = arch_local_irq_save();
+	arch_local_irq_restore(probe.enabled_flags);
+	schedule();
+	flags = arch_local_irq_save();
+	check(flags == probe.enabled_flags, "sched: boot resumes with IRQs enabled after yielding");
+
+	schedule();
+	flags = arch_local_irq_save();
+	check(flags == probe.disabled_flags, "sched: boot keeps IRQs disabled when an IRQ-enabled task yields");
+	schedule();
+	check(probe.completed, "sched: the IRQ probe runs to completion");
+	if (!probe.completed)
+		task_destroy(worker);
+	arch_local_irq_restore(probe.disabled_flags);
 }
 
 struct exit_probe {
@@ -128,6 +182,7 @@ void test_sched(void)
 	schedule();
 	check(task_current() == boot && buddy_free_pages() == free_before,
 	      "sched: cleanup leaves an empty run queue and returns the task pages");
+	test_schedule_irq_restore();
 	test_task_exit();
 	/* 启动任务从这里开始承担 idle 角色，因此最后测试这条路径。 */
 	test_idle_dispatch();
