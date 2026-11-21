@@ -1,5 +1,6 @@
 #include <minux/buddy.h>
 #include <minux/bug.h>
+#include <minux/irq.h>
 #include <minux/page.h>
 #include <minux/slab.h>
 #include <minux/switch_to.h>
@@ -7,7 +8,9 @@
 
 static struct task_struct boot_task;
 static struct task_struct *current_task;
-/* 按 FIFO 排列可运行的任务，当前任务在切出时才加入队尾。 */
+//idle_task 记录普通任务推出后切回谁
+static struct task_struct *idle_task;
+/* 按 FIFO 排列等待运行的普通任务。 */
 static LIST_HEAD(run_queue);
 /* 单 hart 上，接手的任务会在再次调度前回收这个已退出的任务。 */
 static struct task_struct *dead_task;
@@ -50,7 +53,7 @@ static void task_start(void)
 	finish_task_switch();
 	task->entry(task->arg);
 	task->state = TASK_DEAD;
-	/* 启动任务一直可运行，退出时总能切到另一个任务。 */
+	/* 退出时由队列中的任务或 idle 接手。 */
 	schedule();
 	//末尾的 BUG() 用来检查一个约定：已退出的任务一旦切走，就永远不会恢复执行。如果这里的 schedule() 返回了，就说明退出路径出了错。
 	BUG();
@@ -100,12 +103,14 @@ void task_switch(struct task_struct *next)
 		return;
 	BUG_ON(next->state != TASK_RUNNABLE || !next->context);
 
-	list_del_init(&next->run_list);
+	if (next != idle_task)
+		list_del_init(&next->run_list);
 	if (prev->state == TASK_DEAD) {
 		dead_task = prev;
 	} else {
 		prev->state = TASK_RUNNABLE;
-		list_add_tail(&prev->run_list, &run_queue);
+		if (prev != idle_task)
+			list_add_tail(&prev->run_list, &run_queue);
 	}
 	next->state = TASK_RUNNING;
 	current_task = next;
@@ -115,7 +120,22 @@ void task_switch(struct task_struct *next)
 
 void schedule(void)
 {
+	if (!list_empty(&run_queue))
+		task_switch(list_first_entry(&run_queue, struct task_struct, run_list));
+	else if (idle_task && current_task->state == TASK_DEAD)
+		task_switch(idle_task);
+}
+
+void task_idle_once(void)
+{
+	unsigned long flags = arch_local_irq_save();
+
+	BUG_ON(current_task != &boot_task);
+	idle_task = &boot_task;
+	/* 关中断检查队列，待处理中断可以唤醒 CPU，恢复总开关后再处理。 */
 	if (list_empty(&run_queue))
-		return;
-	task_switch(list_first_entry(&run_queue, struct task_struct, run_list));
+		arch_wait_for_interrupt();
+	else
+		schedule();
+	arch_local_irq_restore(flags);
 }

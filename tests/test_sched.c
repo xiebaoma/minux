@@ -59,6 +59,41 @@ static void test_task_exit(void)
 	}
 }
 
+static void idle_probe_entry(void *arg)
+{
+	unsigned int *runs = arg;
+
+	(*runs)++;
+	schedule();
+	(*runs)++;
+}
+
+static void test_idle_dispatch(void)
+{
+	struct task_struct *boot = task_current();
+	u64 free_before = buddy_free_pages();
+	unsigned int runs[2] = { 0 };
+	struct task_struct *first = task_create(idle_probe_entry, &runs[0]);
+	struct task_struct *second = task_create(idle_probe_entry, &runs[1]);
+
+	check(first && second, "sched: create two tasks for the idle path");
+	if (!first || !second) {
+		task_destroy(first);
+		task_destroy(second);
+		return;
+	}
+
+	task_idle_once();
+	check(task_current() == boot && runs[0] == 2 && runs[1] == 2,
+	      "sched: idle resumes only after both tasks have yielded and exited");
+	if (runs[0] < 2)
+		task_destroy(first);
+	if (runs[1] < 2)
+		task_destroy(second);
+	check(buddy_free_pages() == free_before,
+	      "sched: idle fallback reaps the last task and returns all pages");
+}
+
 void test_sched(void)
 {
 	struct task_struct *boot = task_current();
@@ -94,4 +129,6 @@ void test_sched(void)
 	check(task_current() == boot && buddy_free_pages() == free_before,
 	      "sched: cleanup leaves an empty run queue and returns the task pages");
 	test_task_exit();
+	/* 启动任务从这里开始承担 idle 角色，因此最后测试这条路径。 */
+	test_idle_dispatch();
 }

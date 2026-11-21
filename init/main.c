@@ -290,7 +290,7 @@ static void start_kernel_mapped(void)
 	for (unsigned long reported = 0;;) {
 		unsigned long current;
 
-		asm volatile("wfi" : : : "memory");
+		task_idle_once();
 		current = timer_ticks();
 		if (current < reported + TIMER_HZ)
 			continue;

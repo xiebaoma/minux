@@ -2,6 +2,7 @@
 #include <asm/trap.h>
 #include <asm/timer.h>
 #include <asm/uart.h>
+#include <minux/irq.h>
 #include <minux/panic.h>
 
 #define SCAUSE_INTERRUPT (1UL << (sizeof(unsigned long) * 8 - 1))
@@ -21,6 +22,29 @@ void trap_enable_interrupts(void)
 {
 	/* 各来源在 sie 单独开启；此处打开 S 模式的总开关。 */
 	asm volatile("csrs sstatus, %0" : : "r"(SSTATUS_SIE) : "memory");
+}
+
+unsigned long arch_local_irq_save(void)
+{
+	unsigned long status;
+
+	asm volatile("csrrc %0, sstatus, %1"
+		     : "=r"(status) : "r"(SSTATUS_SIE) : "memory");
+	return status & SSTATUS_SIE;
+}
+
+void arch_local_irq_restore(unsigned long flags)
+{
+	if (flags & SSTATUS_SIE)
+		trap_enable_interrupts();
+	else
+		asm volatile("csrc sstatus, %0" : : "r"(SSTATUS_SIE) : "memory");
+}
+
+void arch_wait_for_interrupt(void)
+{
+	/* WFI 可由已启用且待处理的中断唤醒，此时 sstatus.SIE 可为零。 */
+	asm volatile("wfi" : : : "memory");
 }
 
 void riscv_trap_handler(struct pt_regs *regs)
