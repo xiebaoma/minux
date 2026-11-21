@@ -10,7 +10,7 @@ static struct task_struct boot_task;
 static struct task_struct *current_task;
 //idle_task 记录普通任务推出后切回谁
 static struct task_struct *idle_task;
-/* 按 FIFO 排列等待运行的普通任务。 */
+/* 本地中断关闭时访问，按 FIFO 排列等待运行的普通任务。 */
 static LIST_HEAD(run_queue);
 /* 单 hart 上，接手的任务会在再次调度前回收这个已退出的任务。 */
 static struct task_struct *dead_task;
@@ -62,6 +62,7 @@ static void task_start(void)
 struct task_struct *task_create(void (*entry)(void *), void *arg)
 {
 	struct task_struct *task;
+	unsigned long flags;
 	char *stack;
 
 	if (!entry)
@@ -81,15 +82,26 @@ struct task_struct *task_create(void (*entry)(void *), void *arg)
 	task->state = TASK_RUNNABLE;
 	task->entry = entry;
 	task->arg = arg;
+	flags = arch_local_irq_save();
 	list_add_tail(&task->run_list, &run_queue);
+	arch_local_irq_restore(flags);
 	return task;
 }
 
 bool task_destroy(struct task_struct *task)
 {
-	if (!task || task == &boot_task || task->state != TASK_RUNNABLE)
+	unsigned long flags;
+
+	if (!task || task == &boot_task)
 		return false;
+	flags = arch_local_irq_save();
+	if (task->state != TASK_RUNNABLE) {
+		arch_local_irq_restore(flags);
+		return false;
+	}
 	list_del(&task->run_list);
+	task->state = TASK_DEAD;
+	arch_local_irq_restore(flags);
 	task_free(task);
 	return true;
 }

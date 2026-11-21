@@ -28,7 +28,10 @@ struct task_struct {
 void task_init(void);
 struct task_struct *task_current(void);
 
-/* 新任务入队并在首次切入时调用 entry(arg)。入口须在关中断时返回，返回后自动回收。 */
+/*
+ * 创建和销毁都保留调用者的本地中断状态。
+ * 新任务首次切入时调用 entry(arg)。入口须在关中断时返回，返回后自动回收。
+ */
 struct task_struct *task_create(void (*entry)(void *), void *arg);
 /* 销毁队列中尚未退出的任务。调用者须确保任务指针仍然有效。 */
 bool task_destroy(struct task_struct *task);

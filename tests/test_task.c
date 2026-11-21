@@ -1,4 +1,6 @@
+#include <asm/trap.h>
 #include <minux/buddy.h>
+#include <minux/irq.h>
 #include <minux/page.h>
 #include <minux/task.h>
 #include "test.h"
@@ -45,6 +47,47 @@ static void probe_entry(void *arg)
 	task_switch(probe->next);
 }
 
+static void count_entry(void *arg)
+{
+	unsigned int *runs = arg;
+
+	(*runs)++;
+}
+
+static void test_queue_irq_restore(struct task_struct *boot)
+{
+	unsigned long initial_flags = arch_local_irq_save();
+	u64 free_before = buddy_free_pages();
+
+	for (unsigned int enabled = 0; enabled < 2; enabled++) {
+		unsigned long expected, flags;
+		unsigned int runs = 0;
+		struct task_struct *task;
+		bool destroyed;
+
+		/* 启动自测在设备中断初始化前运行。 */
+		if (enabled)
+			trap_enable_interrupts();
+		expected = arch_local_irq_save();
+		arch_local_irq_restore(expected);
+
+		task = task_create(count_entry, &runs);
+		flags = arch_local_irq_save();
+		arch_local_irq_restore(expected);
+		check(task && task->state == TASK_RUNNABLE && flags == expected,
+		      "task: creation queues the task and preserves IRQ state");
+
+		destroyed = task_destroy(task);
+		flags = arch_local_irq_save();
+		check(destroyed && flags == expected,
+		      "task: destroying a queued task preserves IRQ state");
+		schedule();
+		check(task_current() == boot && runs == 0 && buddy_free_pages() == free_before,
+		      "task: destruction removes the task from the queue and returns its pages");
+	}
+	arch_local_irq_restore(initial_flags);
+}
+
 void test_task(void)
 {
 	struct task_struct *boot = task_current();
@@ -85,4 +128,5 @@ void test_task(void)
 	if (second.task)
 		check(task_destroy(second.task), "task: release the second suspended context");
 	check(buddy_free_pages() == free_before, "task: release all allocated task pages");
+	test_queue_irq_restore(boot);
 }
