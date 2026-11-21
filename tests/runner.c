@@ -20,6 +20,7 @@ static const struct test_suite suites[] = {
 	{ "slab",   test_slab },
 	{ "sv39",   test_sv39 },
 	{ "mm",     test_mm },
+	{ "task",   test_task },
 };
 
 static int failures;

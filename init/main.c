@@ -15,6 +15,7 @@
 #include <minux/selftest.h>
 #include <minux/slab.h>
 #include <minux/string.h>
+#include <minux/task.h>
 
 /* 设备树规范规定：父节点没有写这两个属性时，默认分别为 2 和 1。 */
 static u32 root_address_cells = 2;
@@ -264,6 +265,7 @@ static void start_kernel_mapped(void)
 	if (!buddy_init(&boot_memblock))
 		panic("cannot initialize buddy allocator");
 	slab_init();
+	task_init();
 	memblock_for_each_free_range(&boot_memblock, log_free_range, NULL);
 	nr_free_pages = buddy_free_pages();
 	pr_info("memory: %llu RAM pages, %llu reserved, %llu free\n",
