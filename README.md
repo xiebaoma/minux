@@ -2,7 +2,7 @@
 
 Minux 是一个面向 RISC-V 64 的类 Unix 宏内核。它以 Linux 的内核架构为参照，在保持代码精简、可读的前提下，提供与 Linux 兼容的系统调用接口。
 
-> **最新发布版本为 `v0.4`**。Minux 在 QEMU `virt` 单 hart 配置下启用 Sv39 分页和高半区内核映射，支持通过 `mm_struct` 和 `vm_area_struct` 管理独立的用户地址空间。`v0.5` 分支新增内核线程、时钟抢占、自旋锁和等待队列。
+> **当前版本 `v0.5`**。Minux 在 QEMU `virt` 单 hart 配置下支持内核线程、时钟抢占、自旋锁和等待队列。多个内核线程可由定时器驱动轮转，阻塞线程可在条件满足后唤醒。
 
 ## 设计目标
 
@@ -48,11 +48,11 @@ arch/riscv/            架构相关代码
   include/asm/         架构相关头文件
 include/minux/         内核通用头文件（types.h、string.h ...）
 init/                  通用初始化（start_kernel）
-kernel/                核心子系统（printk、panic）
+kernel/                核心子系统（printk、panic、任务与调度）
 lib/                   通用库函数（string、vsprintf）
 mm/                    启动内存表、buddy、slab、虚拟地址空间管理
 tests/                 内核自测和 QEMU 串口集成测试
-docs/                  内存管理、FDT、异常与中断设计文档及路线图
+docs/                  内存管理、调度、FDT、异常与中断设计文档及路线图
 ```
 
 ## 设计文档与路线图
