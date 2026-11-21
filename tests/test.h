@@ -20,6 +20,7 @@ void test_puts(const char *s);
 /* ---- 测试套件 ---- */
 void test_string(void);
 void test_list(void);
+void test_spinlock(void);
 void test_printk(void);
 void test_fdt(void);
 void test_memblock(void);

@@ -13,6 +13,7 @@ struct test_suite {
 static const struct test_suite suites[] = {
 	{ "string", test_string },
 	{ "list",   test_list },
+	{ "spinlock", test_spinlock },
 	{ "printk", test_printk },
 	{ "fdt",    test_fdt },
 	{ "memblock", test_memblock },
