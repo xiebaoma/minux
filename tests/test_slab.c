@@ -1,4 +1,3 @@
-#include <asm/trap.h>
 #include <minux/buddy.h>
 #include <minux/irq.h>
 #include <minux/limits.h>
@@ -122,7 +121,7 @@ static void test_irq_restore(void)
 
 		/* 此时设备中断尚未初始化，可临时打开总开关。 */
 		if (enabled)
-			trap_enable_interrupts();
+			arch_local_irq_enable();
 		expected = arch_local_irq_save();
 		arch_local_irq_restore(expected);
 

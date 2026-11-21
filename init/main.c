@@ -6,6 +6,7 @@
 #include <asm/virt.h>
 #include <minux/buddy.h>
 #include <minux/fdt.h>
+#include <minux/irq.h>
 #include <minux/limits.h>
 #include <minux/memblock.h>
 #include <minux/page.h>
@@ -281,12 +282,13 @@ static void start_kernel_mapped(void)
 	plic_init(&irq_devices);
 	uart_init(&irq_devices);
 
+	timer_init(timebase_frequency);
+	arch_local_irq_enable();
+	run_runtime_selftests();
 	pr_info("timer: %u Hz, timebase: %u Hz\n",
 		TIMER_HZ, timebase_frequency);
-	timer_init(timebase_frequency);
-	trap_enable_interrupts();
 
-	/* 中断处理器只计数；普通上下文每秒报告一次，避免在中断中刷屏。 */
+	/* 在 idle 循环中每秒报告一次 tick 计数。 */
 	for (unsigned long reported = 0;;) {
 		unsigned long current;
 

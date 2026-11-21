@@ -1,7 +1,7 @@
-#include <asm/trap.h>
 #include <minux/buddy.h>
 #include <minux/irq.h>
 #include <minux/task.h>
+#include <minux/wait.h>
 #include "test.h"
 
 struct schedule_probe {
@@ -32,7 +32,7 @@ static void irq_schedule_probe_entry(void *arg)
 	struct irq_schedule_probe *probe = arg;
 	unsigned long flags = arch_local_irq_save();
 
-	check(flags == probe->disabled_flags, "sched: switches to a new task with IRQs disabled");
+	check(flags == probe->enabled_flags, "sched: a new task starts with IRQs enabled");
 	schedule();
 	flags = arch_local_irq_save();
 	check(flags == probe->disabled_flags, "sched: resuming a task preserves its disabled IRQ state");
@@ -42,6 +42,7 @@ static void irq_schedule_probe_entry(void *arg)
 	flags = arch_local_irq_save();
 	check(flags == probe->enabled_flags, "sched: resuming a task restores its enabled IRQ state");
 	probe->completed = true;
+	arch_local_irq_restore(flags);
 }
 
 static void test_schedule_irq_restore(void)
@@ -56,7 +57,7 @@ static void test_schedule_irq_restore(void)
 
 	probe.disabled_flags = arch_local_irq_save();
 	/* 启动自测在设备中断初始化前运行。 */
-	trap_enable_interrupts();
+	arch_local_irq_enable();
 	probe.enabled_flags = arch_local_irq_save();
 	arch_local_irq_restore(probe.enabled_flags);
 	schedule();
@@ -148,6 +149,77 @@ static void test_idle_dispatch(void)
 	      "sched: idle fallback reaps the last task and returns all pages");
 }
 
+struct wait_probe {
+	struct wait_queue queue;
+	bool ready;
+	unsigned int woken;
+};
+
+struct wait_worker {
+	struct wait_probe *probe;
+	unsigned int turn;
+};
+
+static bool wait_probe_ready(void *arg)
+{
+	const struct wait_probe *probe = arg;
+
+	return probe->ready;
+}
+
+static void wait_probe_entry(void *arg)
+{
+	const struct wait_worker *worker = arg;
+	struct wait_probe *probe = worker->probe;
+	unsigned long enabled = arch_local_irq_save();
+	unsigned long expected = arch_local_irq_save();
+	unsigned long flags;
+
+	if (worker->turn == 0)
+		expected = enabled;
+	arch_local_irq_restore(expected);
+
+	wait_event(&probe->queue, wait_probe_ready, probe);
+	flags = arch_local_irq_save();
+	check(flags == expected, "wait: sleeping preserves the caller's IRQ state");
+	check(probe->ready && probe->woken == worker->turn,
+	      "wait: waiters resume in FIFO order after the condition is true");
+	probe->woken++;
+	arch_local_irq_restore(enabled);
+}
+
+static void test_wait_queue(void)
+{
+	struct wait_probe probe = { 0 };
+	struct wait_worker workers[] = { { &probe, 0 }, { &probe, 1 } };
+	struct task_struct *first, *second;
+	u64 free_before = buddy_free_pages();
+
+	init_wait_queue(&probe.queue);
+	first = task_create(wait_probe_entry, &workers[0]);
+	second = task_create(wait_probe_entry, &workers[1]);
+	check(first && second, "wait: create two waiters");
+	if (!first || !second) {
+		task_destroy(first);
+		task_destroy(second);
+		return;
+	}
+
+	task_idle_once();
+	check(probe.woken == 0 && first->state == TASK_BLOCKED && second->state == TASK_BLOCKED,
+	      "wait: both waiters block and return control to idle");
+	wake_up_all(&probe.queue);
+	task_idle_once();
+	check(probe.woken == 0, "wait: waking before the condition is true puts waiters back to sleep");
+
+	probe.ready = true;
+	wake_up_all(&probe.queue);
+	task_idle_once();
+	check(probe.woken == 2 && list_empty(&probe.queue.tasks),
+	      "wait: wake-up runs both waiters and drains the queue");
+	check(buddy_free_pages() == free_before, "wait: exiting waiters return their stack pages");
+}
+
 void test_sched(void)
 {
 	struct task_struct *boot = task_current();
@@ -184,6 +256,7 @@ void test_sched(void)
 	      "sched: cleanup leaves an empty run queue and returns the task pages");
 	test_schedule_irq_restore();
 	test_task_exit();
-	/* 启动任务从这里开始承担 idle 角色，因此最后测试这条路径。 */
+	/* 启动任务从这里开始承担 idle 角色。 */
 	test_idle_dispatch();
+	test_wait_queue();
 }

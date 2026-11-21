@@ -9,8 +9,10 @@
 
 #ifdef CONFIG_SELFTEST
 void run_selftests(void);
+void run_runtime_selftests(void);
 #else
 static inline void run_selftests(void) { }
+static inline void run_runtime_selftests(void) { }
 #endif
 
 #endif /* _MINUX_SELFTEST_H */

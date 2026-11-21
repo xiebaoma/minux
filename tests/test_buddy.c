@@ -1,4 +1,3 @@
-#include <asm/trap.h>
 #include <minux/buddy.h>
 #include <minux/irq.h>
 #include <minux/memblock.h>
@@ -171,7 +170,7 @@ static void test_irq_restore(const struct free_layout *layout)
 
 		/* 启动自测在设备中断初始化前运行，可临时打开总开关。 */
 		if (enabled)
-			trap_enable_interrupts();
+			arch_local_irq_enable();
 		flags = arch_local_irq_save();
 		arch_local_irq_restore(flags);
 

@@ -1,4 +1,3 @@
-#include <asm/trap.h>
 #include <minux/spinlock.h>
 #include "test.h"
 
@@ -11,7 +10,7 @@ void test_spinlock(void)
 	unsigned long enabled_flags, outer_flags, inner_flags, restored_flags;
 
 	/* 此时 PLIC、UART 和定时器尚未初始化，临时打开总中断。 */
-	trap_enable_interrupts();
+	arch_local_irq_enable();
 	enabled_flags = arch_local_irq_save();
 	arch_local_irq_restore(enabled_flags);
 	check(enabled_flags != disabled_flags, "spinlock: IRQ test starts enabled");

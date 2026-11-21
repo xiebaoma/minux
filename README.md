@@ -2,7 +2,7 @@
 
 Minux 是一个面向 RISC-V 64 的类 Unix 宏内核。它以 Linux 的内核架构为参照，在保持代码精简、可读的前提下，提供与 Linux 兼容的系统调用接口。
 
-> **当前版本 `v0.4`**。Minux 在 QEMU `virt` 单 hart 配置下启用 Sv39 分页和高半区内核映射，支持通过 `mm_struct` 和 `vm_area_struct` 管理独立的用户地址空间。自测覆盖页表切换、页权限和缺页异常。
+> **最新发布版本为 `v0.4`**。Minux 在 QEMU `virt` 单 hart 配置下启用 Sv39 分页和高半区内核映射，支持通过 `mm_struct` 和 `vm_area_struct` 管理独立的用户地址空间。`v0.5` 分支新增内核线程、时钟抢占、自旋锁和等待队列。
 
 ## 设计目标
 
@@ -32,7 +32,7 @@ brew install qemu riscv64-elf-gcc python
 |---|---|
 | `make` | 构建内核镜像 `build/minux.elf` |
 | `make run` | 在 QEMU 中启动（按 `Ctrl-A X` 退出） |
-| `make test` | 构建自测内核，自动检查全部自测、UART/PLIC 回显、定时器继续运行和 QEMU 正常退出 |
+| `make test` | 在 QEMU 中运行内核自测，验证时钟抢占、等待队列、UART/PLIC 回显及正常退出 |
 | `make debug` | 启动 QEMU 并在第一条指令前暂停，GDB 服务监听 `localhost:1234` |
 | `make dump` | 生成反汇编文件 `build/minux.asm` |
 | `make clean` | 清理构建产物 |
@@ -58,4 +58,5 @@ docs/                  内存管理、FDT、异常与中断设计文档及路线
 ## 设计文档与路线图
 
 - [内存管理](docs/MM.md)
+- [内核线程与调度](docs/SCHED.md)
 - [路线图](docs/ROADMAP.md)

@@ -5,10 +5,11 @@
 #include <minux/slab.h>
 #include <minux/switch_to.h>
 #include <minux/task.h>
+#include <minux/wait.h>
 
 static struct task_struct boot_task;
 static struct task_struct *current_task;
-//idle_task 记录普通任务推出后切回谁
+/* 启动任务进入 idle 循环后，仅在没有其他任务可运行时接手。 */
 static struct task_struct *idle_task;
 /* 本地中断关闭时访问，按 FIFO 排列等待运行的普通任务。 */
 static LIST_HEAD(run_queue);
@@ -51,11 +52,12 @@ static void task_start(void)
 
 	/* 新线程直接进入这里，没有挂起的 task_switch() 可以返回。 */
 	finish_task_switch();
+	arch_local_irq_enable();
 	task->entry(task->arg);
+	arch_local_irq_save();
 	task->state = TASK_DEAD;
-	/* 退出时由队列中的任务或 idle 接手。 */
 	schedule();
-	//末尾的 BUG() 用来检查一个约定：已退出的任务一旦切走，就永远不会恢复执行。如果这里的 schedule() 返回了，就说明退出路径出了错。
+	/* 已退出的任务一旦切走便不会恢复执行。 */
 	BUG();
 }
 
@@ -119,7 +121,7 @@ void task_switch(struct task_struct *next)
 		list_del_init(&next->run_list);
 	if (prev->state == TASK_DEAD) {
 		dead_task = prev;
-	} else {
+	} else if (prev->state == TASK_RUNNING) {
 		prev->state = TASK_RUNNABLE;
 		if (prev != idle_task)
 			list_add_tail(&prev->run_list, &run_queue);
@@ -130,14 +132,21 @@ void task_switch(struct task_struct *next)
 	finish_task_switch();
 }
 
+static void schedule_irq_disabled(void)
+{
+	if (!list_empty(&run_queue)) {
+		task_switch(list_first_entry(&run_queue, struct task_struct, run_list));
+	} else if (current_task->state != TASK_RUNNING) {
+		BUG_ON(!idle_task);
+		task_switch(idle_task);
+	}
+}
+
 void schedule(void)
 {
 	unsigned long flags = arch_local_irq_save();
 
-	if (!list_empty(&run_queue))
-		task_switch(list_first_entry(&run_queue, struct task_struct, run_list));
-	else if (idle_task && current_task->state == TASK_DEAD)
-		task_switch(idle_task);
+	schedule_irq_disabled();
 	arch_local_irq_restore(flags);
 }
 
@@ -151,6 +160,33 @@ void task_idle_once(void)
 	if (list_empty(&run_queue))
 		arch_wait_for_interrupt();
 	else
-		schedule();
+		schedule_irq_disabled();
+	arch_local_irq_restore(flags);
+}
+
+void wait_event(struct wait_queue *queue, bool (*ready)(void *), void *arg)
+{
+	unsigned long flags = arch_local_irq_save();
+	struct task_struct *task = current_task;
+
+	while (!ready(arg)) {
+		BUG_ON(!idle_task || task == idle_task);
+		task->state = TASK_BLOCKED;
+		list_add_tail(&task->run_list, &queue->tasks);
+		schedule_irq_disabled();
+	}
+	arch_local_irq_restore(flags);
+}
+
+void wake_up_all(struct wait_queue *queue)
+{
+	unsigned long flags = arch_local_irq_save();
+	struct task_struct *task, *next;
+
+	list_for_each_entry_safe(task, next, &queue->tasks, run_list) {
+		list_del(&task->run_list);
+		task->state = TASK_RUNNABLE;
+		list_add_tail(&task->run_list, &run_queue);
+	}
 	arch_local_irq_restore(flags);
 }

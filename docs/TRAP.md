@@ -16,6 +16,8 @@
 
 启动代码从 DTB 的 `/cpus/timebase-frequency` 取得 `time` 计数器频率。`timer_init()` 按该频率计算每秒 10 次的间隔，通过 SBI TIME 扩展设置首次绝对截止时间，然后分别打开 `sie.STIE` 和 `sstatus.SIE`。每次定时器中断都重新设置下次截止时间并增加 tick 计数。普通内核上下文每秒输出一次计数；自测镜像观察到两次输出后关机。
 
+从 v0.5 开始，定时器中断更新计数后还会派发就绪线程。被切出的线程重新运行时，从自己内核栈上的 trap 现场恢复。见 [内核线程与调度](SCHED.md)。
+
 SBI TIME 的参数是绝对时间，且设置未来的截止时间会清除待处理的定时器中断，见 [SBI TIME 规范](https://docs.riscv.org/reference/sbi/v3.0/ext-time.html)。当前采用“处理时刻 + 间隔”，因此处理耗时会带来少量周期漂移；此阶段先验证稳定触发，后续可改为基于上一次截止时间累计。
 
 ## PLIC 与 UART 接收

@@ -4,6 +4,7 @@
 #include <asm/uart.h>
 #include <minux/irq.h>
 #include <minux/panic.h>
+#include <minux/task.h>
 
 #define SCAUSE_INTERRUPT (1UL << (sizeof(unsigned long) * 8 - 1))
 #define SSTATUS_SIE      (1UL << 1)
@@ -18,7 +19,7 @@ void trap_init(void)
 	asm volatile("csrw stvec, %0" : : "r"(riscv_trap_entry) : "memory");
 }
 
-void trap_enable_interrupts(void)
+void arch_local_irq_enable(void)
 {
 	/* 各来源在 sie 单独开启；此处打开 S 模式的总开关。 */
 	asm volatile("csrs sstatus, %0" : : "r"(SSTATUS_SIE) : "memory");
@@ -36,7 +37,7 @@ unsigned long arch_local_irq_save(void)
 void arch_local_irq_restore(unsigned long flags)
 {
 	if (flags & SSTATUS_SIE)
-		trap_enable_interrupts();
+		arch_local_irq_enable();
 	else
 		asm volatile("csrc sstatus, %0" : : "r"(SSTATUS_SIE) : "memory");
 }
@@ -53,6 +54,8 @@ void riscv_trap_handler(struct pt_regs *regs)
 
 	if ((regs->cause & SCAUSE_INTERRUPT) && code == SCAUSE_TIMER) {
 		timer_handle_interrupt();
+		/* 定时器已重装，当前任务的完整 trap 现场仍保存在其栈上。 */
+		schedule();
 		return;
 	}
 	if ((regs->cause & SCAUSE_INTERRUPT) && code == SCAUSE_EXTERNAL) {

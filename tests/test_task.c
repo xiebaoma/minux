@@ -1,4 +1,3 @@
-#include <asm/trap.h>
 #include <minux/buddy.h>
 #include <minux/irq.h>
 #include <minux/page.h>
@@ -22,6 +21,7 @@ static void probe_entry(void *arg)
 	register unsigned long saved_low asm("s1") = expected;
 	register unsigned long saved_high asm("s11") = ~expected;
 
+	arch_local_irq_save();
 	check(task_current() == probe->task && probe->task->state == TASK_RUNNING &&
 	      probe->boot->state == TASK_RUNNABLE,
 	      "task: the first entry sees the new task running");
@@ -67,7 +67,7 @@ static void test_queue_irq_restore(struct task_struct *boot)
 
 		/* 启动自测在设备中断初始化前运行。 */
 		if (enabled)
-			trap_enable_interrupts();
+			arch_local_irq_enable();
 		expected = arch_local_irq_save();
 		arch_local_irq_restore(expected);
 

@@ -34,7 +34,6 @@ _Static_assert(sizeof(struct pt_regs) == PT_REGS_SIZE,
 	       "pt_regs size mismatch");
 
 void trap_init(void);
-void trap_enable_interrupts(void);
 
 #endif /* !__ASSEMBLER__ */
 #endif /* _ASM_RISCV_TRAP_H */

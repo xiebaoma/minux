@@ -46,13 +46,14 @@ def main():
 
     try:
         # stdin is a pipe, so any echoed bytes must come from the guest UART.
-        ready = wait_for(b"timer: 10 Hz")
+        # Wait for complete log lines so the echo cannot interrupt their output.
+        ready = wait_for(b"\r\n", wait_for(b"timer: 10 Hz, timebase: "))
         proc.stdin.write(FIRST)
         proc.stdin.flush()
         first_end = wait_for(FIRST, ready)
 
         # A timer interrupt between inputs proves the first IRQ handler returned.
-        tick_end = wait_for(b"timer: 10 ticks", first_end)
+        tick_end = wait_for(b"timer: 10 ticks\r\n", first_end)
         proc.stdin.write(SECOND + b"\r")
         proc.stdin.flush()
         wait_for(SECOND_ECHO, tick_end)
