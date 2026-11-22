@@ -10,7 +10,10 @@ enum vm_flags {
 	VM_READ  = 1U << 0,
 	VM_WRITE = 1U << 1,
 	VM_EXEC  = 1U << 2,
+	VM_ANON  = 1U << 3, /* 缺页时可以分配零页。 */
 };
+
+#define VM_ACCESS_MASK (VM_READ | VM_WRITE | VM_EXEC)
 
 struct mm_struct {
 	struct arch_pgd *pgd;
@@ -25,7 +28,7 @@ struct vm_area_struct {
 	struct list_head vm_link;
 };
 
-/* 在 buddy 和 slab 就绪后使用。修改和销毁均由调用者在地址空间未启用时执行。 */
+/* 在 buddy 和 slab 就绪后使用。登记 VMA 和销毁时地址空间须未启用。 */
 struct mm_struct *mm_alloc(void);
 void mm_destroy(struct mm_struct *mm);
 
@@ -37,5 +40,10 @@ const struct vm_area_struct *find_vma(const struct mm_struct *mm, uintptr_t addr
 
 /* 为 VMA 内未映射的页首地址分配零页。成功后页归 mm 持有，失败返回 NULL。 */
 struct page *mm_populate_page(struct mm_struct *mm, uintptr_t addr);
+
+/* 仅在缺少映射且匿名 VMA 允许本次访问时补页。成功后可重试指令。 */
+bool mm_handle_user_fault(struct mm_struct *mm, uintptr_t addr, unsigned int access);
+/* 借用可按 access 访问的用户页，必要时补匿名页。页的所有权仍归 mm。 */
+struct page *mm_user_page(struct mm_struct *mm, uintptr_t addr, unsigned int access);
 
 #endif /* _MINUX_MM_H */

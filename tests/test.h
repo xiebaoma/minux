@@ -32,5 +32,6 @@ void test_task(void);
 void test_sched(void);
 void test_preempt(void);
 void test_user_preempt(void);
+void test_user_fault(void);
 
 #endif /* _TESTS_TEST_H */

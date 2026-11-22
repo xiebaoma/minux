@@ -1,0 +1,13 @@
+#ifndef _TEST_USER_FAULT_PROBE_H
+#define _TEST_USER_FAULT_PROBE_H
+
+/* C 测试和用户探针共用的地址。匿名区位于另一条 Sv39 根表路径。 */
+#define PROBE_PAGE_BYTES 4096
+#define PROBE_CODE       0x10000
+#define PROBE_STACK      (PROBE_CODE + PROBE_PAGE_BYTES)
+#define PROBE_STACK_TOP  (PROBE_STACK + PROBE_PAGE_BYTES)
+#define PROBE_ANON       0x40000000
+#define PROBE_ANON_END   (PROBE_ANON + 5 * PROBE_PAGE_BYTES)
+#define PROBE_RO         (PROBE_ANON + 7 * PROBE_PAGE_BYTES)
+
+#endif

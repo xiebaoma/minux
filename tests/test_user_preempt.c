@@ -1,5 +1,6 @@
 #include <asm/timer.h>
 #include <minux/buddy.h>
+#include <minux/errno.h>
 #include <minux/irq.h>
 #include <minux/mm.h>
 #include <minux/page.h>
@@ -18,6 +19,8 @@ struct user_probe_stack {
 	unsigned long seed;
 	volatile unsigned long request;
 	volatile unsigned long reply;
+	volatile long pid;
+	volatile long unknown_syscall;
 	unsigned long padding;
 };
 
@@ -106,6 +109,14 @@ static void observe_user_workers(void *arg)
 	arch_local_irq_save();
 	check(wait_for_user_replies(probe, 1),
 	      "user: both tasks read and write their own page at the same VA");
+	check(probe->workers[0].stack->pid == probe->workers[0].task->pid &&
+	      probe->workers[1].stack->pid == probe->workers[1].task->pid &&
+	      probe->workers[0].stack->pid > 0 && probe->workers[1].stack->pid > 0 &&
+	      probe->workers[0].stack->pid != probe->workers[1].stack->pid,
+	      "syscall: getpid returns the current user task's distinct PID");
+	check(probe->workers[0].stack->unknown_syscall == -ENOSYS &&
+	      probe->workers[1].stack->unknown_syscall == -ENOSYS,
+	      "syscall: an unknown call returns -ENOSYS and execution continues");
 
 	/* 两个 U 模式任务只靠定时器让出 CPU，并用寄存器累积第二次结果。 */
 	start = timer_ticks();

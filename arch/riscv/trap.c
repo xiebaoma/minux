@@ -3,7 +3,9 @@
 #include <asm/timer.h>
 #include <asm/uart.h>
 #include <minux/irq.h>
+#include <minux/mm.h>
 #include <minux/panic.h>
+#include <minux/printk.h>
 #include <minux/string.h>
 #include <minux/switch_to.h>
 #include <minux/task.h>
@@ -11,6 +13,10 @@
 #define SCAUSE_INTERRUPT (1UL << (sizeof(unsigned long) * 8 - 1))
 #define SCAUSE_TIMER     5
 #define SCAUSE_EXTERNAL  9
+#define SCAUSE_USER_ECALL 8
+#define SCAUSE_INST_PAGE_FAULT  12
+#define SCAUSE_LOAD_PAGE_FAULT  13
+#define SCAUSE_STORE_PAGE_FAULT 15
 #define SSTATUS_UXL_64   (2UL << 32)
 
 extern void riscv_trap_entry(void);
@@ -64,6 +70,37 @@ void arch_wait_for_interrupt(void)
 	asm volatile("wfi" : : : "memory");
 }
 
+static void handle_user_exception(struct pt_regs *regs)
+{
+	struct task_struct *task = task_current();
+	unsigned int access;
+
+	switch (regs->cause) {
+	case SCAUSE_USER_ECALL:
+		riscv_handle_syscall(regs);
+		return;
+	case SCAUSE_INST_PAGE_FAULT:
+		access = VM_EXEC;
+		break;
+	case SCAUSE_LOAD_PAGE_FAULT:
+		access = VM_READ;
+		break;
+	case SCAUSE_STORE_PAGE_FAULT:
+		access = VM_WRITE;
+		break;
+	default:
+		access = 0;
+		break;
+	}
+
+	if (access && mm_handle_user_fault(task->mm, regs->tval, access))
+		return; /* 保持 sepc，重试触发缺页的指令。 */
+
+	pr_warn("user task %d: exception %lu sepc=0x%lx stval=0x%lx\n",
+		task->pid, regs->cause, regs->epc, regs->tval);
+	task_exit_current();
+}
+
 void riscv_trap_handler(struct pt_regs *regs)
 {
 	unsigned long code = regs->cause & ~SCAUSE_INTERRUPT;
@@ -84,6 +121,11 @@ void riscv_trap_handler(struct pt_regs *regs)
 			uart_handle_interrupt();
 			plic_complete(irq);
 		}
+		return;
+	}
+
+	if (!(regs->cause & SCAUSE_INTERRUPT) && !(regs->status & SSTATUS_SPP)) {
+		handle_user_exception(regs);
 		return;
 	}
 

@@ -191,7 +191,7 @@ bool arch_pgd_map(struct arch_pgd *pgd, uintptr_t va, struct page *page,
 	u64 *entry, leaf;
 
 	if (va >= SV39_LOW_END || va % PAGE_SIZE ||
-	    (vm_flags & ~(VM_READ | VM_WRITE | VM_EXEC)))
+	    (vm_flags & ~VM_ACCESS_MASK))
 		return false;
 	if (vm_flags & VM_READ)
 		prot |= SV39_READ;
@@ -203,7 +203,12 @@ bool arch_pgd_map(struct arch_pgd *pgd, uintptr_t va, struct page *page,
 	if (!leaf)
 		return false;
 	entry = find_empty_entry(&pgd->root, va, 0, &level);
-	return entry && install_user_path(entry, va, level, leaf);
+	if (!entry || !install_user_path(entry, va, level, leaf))
+		return false;
+
+	/* 缺页时可能新挂入非叶项，刷新本 hart 的全部地址翻译。 */
+	asm volatile("sfence.vma" : : : "memory");
+	return true;
 }
 
 static void free_user_entries(struct sv39_table *table, unsigned int count)
@@ -228,28 +233,61 @@ void arch_pgd_free(struct arch_pgd *pgd)
 	free_pages(virt_to_page(pgd), 0);
 }
 
-bool sv39_lookup(const struct sv39_table *root, uintptr_t va, u64 *pa,
-		 unsigned int *prot)
+static u64 sv39_find_leaf(const struct sv39_table *root, uintptr_t va, u64 *pa)
 {
 	const struct sv39_table *table = root;
 
 	if (!root || !canonical(va))
-		return false;
+		return 0;
 	for (int level = SV39_LEVELS - 1; level >= 0; level--) {
 		u64 pte = table->entries[vpn_index(va, level)];
 
 		if (!(pte & PTE_VALID))
-			return false;
+			return 0;
 		if (pte & PTE_LEAF) {
 			if (pa)
 				*pa = pte_phys(pte) | (va & (sv39_level_size(level) - 1));
-			if (prot)
-				*prot = pte & PTE_LEAF;
-			return true;
+			return pte;
 		}
 		table = arch_phys_to_virt(pte_phys(pte));
 	}
-	return false;
+	return 0;
+}
+
+bool sv39_lookup(const struct sv39_table *root, uintptr_t va, u64 *pa,
+		 unsigned int *prot)
+{
+	u64 pte = sv39_find_leaf(root, va, pa);
+
+	if (pte && prot)
+		*prot = pte & PTE_LEAF;
+	return pte != 0;
+}
+
+//这个函数查询某个用户虚拟地址在页表中映射到了哪一页，
+//并可顺便告诉调用者该页的读、写、执行权限。
+//它只查询，不分配内存，也不建立映射。
+struct page *arch_pgd_user_page(const struct arch_pgd *pgd, uintptr_t va,
+				unsigned int *access)
+{
+	u64 pte;
+
+	//地址不在用户地址范围内，返回 NULL。
+	if (va >= SV39_LOW_END)
+		return NULL;
+	pte = sv39_find_leaf(&pgd->root, va, NULL);
+	if (!(pte & PTE_USER))
+		return NULL;
+	if (access) {
+		*access = 0;
+		if (pte & SV39_READ)
+			*access |= VM_READ;
+		if (pte & SV39_WRITE)
+			*access |= VM_WRITE;
+		if (pte & SV39_EXEC)
+			*access |= VM_EXEC;
+	}
+	return virt_to_page(arch_phys_to_virt(pte_phys(pte)));
 }
 
 bool sv39_enable(u64 root_pa)

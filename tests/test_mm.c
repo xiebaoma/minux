@@ -52,6 +52,38 @@ struct held_page {
 	struct page *page;
 };
 
+static void test_anonymous_faults(void)
+{
+	const uintptr_t anon = 2 * PAGE_SIZE;
+	const uintptr_t eager = 4 * PAGE_SIZE;
+	struct mm_struct *mm = mm_alloc();
+	struct page *page;
+	u64 before;
+
+	if (!mm || !mm_add_vma(mm, anon, anon + PAGE_SIZE, VM_READ | VM_ANON) ||
+	    !mm_add_vma(mm, eager, eager + PAGE_SIZE, VM_READ)) {
+		check(false, "mm: prepare anonymous and eager VMAs");
+		mm_destroy(mm);
+		return;
+	}
+	before = buddy_free_pages();
+	check(!mm_handle_user_fault(mm, anon - 1, VM_READ) &&
+	      !mm_handle_user_fault(mm, anon, VM_WRITE) &&
+	      !mm_handle_user_fault(mm, anon, VM_EXEC) &&
+	      !mm_handle_user_fault(mm, eager, VM_READ) &&
+	      buddy_free_pages() == before,
+	      "mm: denied and non-anonymous faults leave the page table empty");
+	check(mm_handle_user_fault(mm, anon + PAGE_SIZE - 1, VM_READ),
+	      "mm: a permitted byte address faults in its anonymous page");
+	page = mm_user_page(mm, anon, VM_READ);
+	check(page && *(u8 *)page_address(page) == 0 && !mm_user_page(mm, anon, VM_WRITE),
+	      "mm: the new anonymous page is zeroed and read-only");
+	check(!mm_handle_user_fault(mm, anon, VM_READ) &&
+	      mm_user_page(mm, anon, VM_READ) == page,
+	      "mm: an exception on a present page cannot be retried by replacing it");
+	mm_destroy(mm);
+}
+
 static void test_population_failure(void)
 {
 	const uintptr_t addr = PAGE_SIZE;
@@ -110,5 +142,6 @@ void test_mm(void)
 
 	test_vmas();
 	test_population_failure();
+	test_anonymous_faults();
 	check(buddy_free_pages() == before, "mm: destruction returns every private page");
 }

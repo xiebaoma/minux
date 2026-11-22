@@ -41,8 +41,8 @@ const struct vm_area_struct *mm_add_vma(struct mm_struct *mm, uintptr_t start,
 	struct vm_area_struct *vma;
 
 	if (start < PAGE_SIZE || start >= end || end > arch_user_limit() ||
-	    (start | end) % PAGE_SIZE || !flags ||
-	    (flags & ~(VM_READ | VM_WRITE | VM_EXEC)) ||
+	    (start | end) % PAGE_SIZE || !(flags & VM_ACCESS_MASK) ||
+	    (flags & ~(VM_ACCESS_MASK | VM_ANON)) ||
 	    ((flags & VM_WRITE) && !(flags & VM_READ)))
 		return NULL;
 	list_for_each(pos, &mm->vmas) {
@@ -74,23 +74,59 @@ const struct vm_area_struct *find_vma(const struct mm_struct *mm, uintptr_t addr
 	return NULL;
 }
 
+static struct page *populate_vma_page(const struct vm_area_struct *vma, uintptr_t addr)
+{
+	struct page *page = alloc_pages(0);
+
+	if (!page)
+		return NULL;
+	memset(page_address(page), 0, PAGE_SIZE);
+	if (!arch_pgd_map(vma->vm_mm->pgd, addr, page, vma->vm_flags & VM_ACCESS_MASK)) {
+		free_pages(page, 0);
+		return NULL;
+	}
+	return page;
+}
+
 struct page *mm_populate_page(struct mm_struct *mm, uintptr_t addr)
 {
 	const struct vm_area_struct *vma;
-	struct page *page;
 
 	if (addr % PAGE_SIZE)
 		return NULL;
 	vma = find_vma(mm, addr);
 	if (!vma || addr < vma->vm_start)
 		return NULL;
-	page = alloc_pages(0);
-	if (!page)
+	return populate_vma_page(vma, addr);
+}
+
+static struct page *resolve_user_page(struct mm_struct *mm, uintptr_t addr,
+				      unsigned int access, bool fault)
+{
+	const struct vm_area_struct *vma = find_vma(mm, addr);
+	unsigned int mapped_access;
+	struct page *page;
+
+	if (!vma || addr < vma->vm_start || !access || (access & ~VM_ACCESS_MASK) ||
+	    (vma->vm_flags & access) != access)
 		return NULL;
-	memset(page_address(page), 0, PAGE_SIZE);
-	if (!arch_pgd_map(mm->pgd, addr, page, vma->vm_flags)) {
-		free_pages(page, 0);
+	page = arch_pgd_user_page(mm->pgd, addr, &mapped_access);
+	/* 已有映射上的硬件异常不能靠补页解决。 */
+	if (page)
+		return !fault && (mapped_access & access) == access ? page : NULL;
+	if (!(vma->vm_flags & VM_ANON))
 		return NULL;
-	}
-	return page;
+	return populate_vma_page(vma, addr & ~(PAGE_SIZE - 1));
+}
+
+bool mm_handle_user_fault(struct mm_struct *mm, uintptr_t addr, unsigned int access)
+{
+	return resolve_user_page(mm, addr, access, true) != NULL;
+}
+
+//内核主动访问用户内存，例如 copy_from_user()	
+//权限符合就返回已有页	struct page *，供内核访问该页
+struct page *mm_user_page(struct mm_struct *mm, uintptr_t addr, unsigned int access)
+{
+	return resolve_user_page(mm, addr, access, false);
 }

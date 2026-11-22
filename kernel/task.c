@@ -1,6 +1,7 @@
 #include <minux/buddy.h>
 #include <minux/bug.h>
 #include <minux/irq.h>
+#include <minux/limits.h>
 #include <minux/mm.h>
 #include <minux/page.h>
 #include <minux/paging.h>
@@ -13,6 +14,7 @@ static struct task_struct boot_task;
 static struct task_struct *current_task;
 /* 启动任务进入 idle 循环后，仅在没有其他任务可运行时接手。 */
 static struct task_struct *idle_task;
+static unsigned int next_user_pid = 1;
 /* 本地中断关闭时访问，按 FIFO 排列等待运行的普通任务。 */
 static LIST_HEAD(run_queue);
 /* 单 hart 上，接手的任务会在再次调度前回收这个已退出的任务。 */
@@ -54,6 +56,15 @@ static void finish_task_switch(void)
 	task_free(task);
 }
 
+void task_exit_current(void)
+{
+	arch_local_irq_save();
+	BUG_ON(current_task == &boot_task || current_task->state != TASK_RUNNING);
+	current_task->state = TASK_DEAD;
+	schedule();
+	BUG();
+}
+
 static void task_start(void) __noreturn;
 
 static void task_start(void)
@@ -67,11 +78,7 @@ static void task_start(void)
 
 	arch_local_irq_enable();
 	task->entry(task->arg);
-	arch_local_irq_save();
-	task->state = TASK_DEAD;
-	schedule();
-	/* 已退出的任务一旦切走便不会恢复执行。 */
-	BUG();
+	task_exit_current();
 }
 
 static struct task_struct *task_alloc(void)
@@ -118,12 +125,23 @@ struct task_struct *task_create_user(struct mm_struct *mm, uintptr_t user_pc,
 				     uintptr_t user_sp)
 {
 	struct task_struct *task;
+	unsigned long flags;
 
 	if (!mm)
 		return NULL;
 	task = task_alloc();
 	if (!task)
 		return NULL;
+
+	flags = arch_local_irq_save();
+	if (next_user_pid <= INT_MAX)
+		task->pid = next_user_pid++;
+	arch_local_irq_restore(flags);
+	if (!task->pid) {
+		task_free(task);
+		return NULL;
+	}
+
 	task->mm = mm;
 	task->context = arch_init_user_thread(task_stack_top(task), task_start,
 					     user_pc, user_sp);

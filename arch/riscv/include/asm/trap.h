@@ -43,6 +43,7 @@ _Static_assert(sizeof(struct pt_regs) == PT_REGS_SIZE,
 	       "pt_regs size mismatch");
 
 void trap_init(void);
+void riscv_handle_syscall(struct pt_regs *regs);
 
 #endif /* !__ASSEMBLER__ */
 #endif /* _ASM_RISCV_TRAP_H */

@@ -1,6 +1,7 @@
 #ifndef _MINUX_TASK_H
 #define _MINUX_TASK_H
 
+#include <minux/compiler.h>
 #include <minux/list.h>
 #include <minux/types.h>
 
@@ -19,6 +20,7 @@ enum task_state {
 
 struct task_struct {
 	enum task_state state;
+	int pid; /* 用户任务的进程号，内核线程使用 0。 */
 	struct list_head run_list; /* 就绪队列和等待队列共用此节点。 */
 	struct arch_thread_context *context; /* 架构保存在内核栈上的切换现场。 */
 	struct page *stack_page;				//指向内核栈分配块的首个页描述符。Minux 为每个新线程分配 4 个连续页，共 16 KiB。创建时用 page_address() 从描述符取得栈底地址，销毁时用它把整块页还给 buddy 分配器。
@@ -46,6 +48,8 @@ struct task_struct *task_create_user(struct mm_struct *mm, uintptr_t user_pc,
 				     uintptr_t user_sp);
 /* 销毁队列中尚未退出的任务。调用者须确保任务指针仍然有效。 */
 bool task_destroy(struct task_struct *task);
+/* 当前任务切走后由接手的任务释放其资源。 */
+void task_exit_current(void) __noreturn;
 
 /* 单 hart，调用者须在普通内核上下文关闭本地中断后主动切换。 */
 void task_switch(struct task_struct *next);

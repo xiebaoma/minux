@@ -1,9 +1,17 @@
+#include <asm/unistd.h>
+
     .section .rodata
     .align 2
     .globl user_probe_start, user_probe_end
 user_probe_start:
-    /* 栈顶预留的 32 字节依次放 seed、request 和 reply。 */
-    addi    sp, sp, -32
+    /* 栈顶的测试区域同时记录两次系统调用的返回值。 */
+    addi    sp, sp, -48
+    li      a7, __NR_getpid
+    ecall
+    sd      a0, 24(sp)
+    li      a7, -1
+    ecall
+    sd      a0, 32(sp)
     ld      s0, 0(sp)
     mv      gp, s0
     not     tp, s0
