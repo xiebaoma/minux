@@ -1,7 +1,9 @@
 #include <minux/buddy.h>
 #include <minux/bug.h>
 #include <minux/irq.h>
+#include <minux/mm.h>
 #include <minux/page.h>
+#include <minux/paging.h>
 #include <minux/slab.h>
 #include <minux/switch_to.h>
 #include <minux/task.h>
@@ -28,8 +30,16 @@ struct task_struct *task_current(void)
 	return current_task;
 }
 
+static void *task_stack_top(const struct task_struct *task)
+{
+	char *base = page_address(task->stack_page);
+
+	return base + (PAGE_SIZE << TASK_STACK_ORDER);
+}
+
 static void task_free(struct task_struct *task)
 {
+	mm_destroy(task->mm);
 	BUG_ON(!free_pages(task->stack_page, TASK_STACK_ORDER));
 	kfree(task);
 }
@@ -52,6 +62,9 @@ static void task_start(void)
 
 	/* 新线程直接进入这里，没有挂起的 task_switch() 可以返回。 */
 	finish_task_switch();
+	if (task->mm)
+		arch_enter_user(task_stack_top(task));
+
 	arch_local_irq_enable();
 	task->entry(task->arg);
 	arch_local_irq_save();
@@ -61,15 +74,10 @@ static void task_start(void)
 	BUG();
 }
 
-struct task_struct *task_create(void (*entry)(void *), void *arg)
+static struct task_struct *task_alloc(void)
 {
-	struct task_struct *task;
-	unsigned long flags;
-	char *stack;
+	struct task_struct *task = kzalloc(sizeof(*task));
 
-	if (!entry)
-		return NULL;
-	task = kmalloc(sizeof(*task));
 	if (!task)
 		return NULL;
 	task->stack_page = alloc_pages(TASK_STACK_ORDER);
@@ -78,15 +86,48 @@ struct task_struct *task_create(void (*entry)(void *), void *arg)
 		return NULL;
 	}
 
-	stack = page_address(task->stack_page);
-	task->context = arch_init_thread(stack + (PAGE_SIZE << TASK_STACK_ORDER),
-					 task_start);
+	return task;
+}
+
+static void task_enqueue(struct task_struct *task)
+{
+	unsigned long flags = arch_local_irq_save();
+
 	task->state = TASK_RUNNABLE;
-	task->entry = entry;
-	task->arg = arg;
-	flags = arch_local_irq_save();
 	list_add_tail(&task->run_list, &run_queue);
 	arch_local_irq_restore(flags);
+}
+
+struct task_struct *task_create(void (*entry)(void *), void *arg)
+{
+	struct task_struct *task;
+
+	if (!entry)
+		return NULL;
+	task = task_alloc();
+	if (!task)
+		return NULL;
+	task->entry = entry;
+	task->arg = arg;
+	task->context = arch_init_thread(task_stack_top(task), task_start);
+	task_enqueue(task);
+	return task;
+}
+
+struct task_struct *task_create_user(struct mm_struct *mm, uintptr_t user_pc,
+				     uintptr_t user_sp)
+{
+	struct task_struct *task;
+
+	if (!mm)
+		return NULL;
+	task = task_alloc();
+	if (!task)
+		return NULL;
+	task->mm = mm;
+	task->context = arch_init_user_thread(task_stack_top(task), task_start,
+					     user_pc, user_sp);
+	task_enqueue(task);
 	return task;
 }
 
@@ -128,6 +169,9 @@ void task_switch(struct task_struct *next)
 	}
 	next->state = TASK_RUNNING;
 	current_task = next;
+	//切到用户任务就启用该任务的页表，切到内核线程就恢复内核页表
+	if (prev->mm != next->mm)
+		arch_pgd_activate(next->mm ? next->mm->pgd : NULL);
 	arch_switch_to(&prev->context, next->context);
 	finish_task_switch();
 }

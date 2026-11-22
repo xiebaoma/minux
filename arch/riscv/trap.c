@@ -4,19 +4,35 @@
 #include <asm/uart.h>
 #include <minux/irq.h>
 #include <minux/panic.h>
+#include <minux/string.h>
+#include <minux/switch_to.h>
 #include <minux/task.h>
 
 #define SCAUSE_INTERRUPT (1UL << (sizeof(unsigned long) * 8 - 1))
-#define SSTATUS_SIE      (1UL << 1)
 #define SCAUSE_TIMER     5
 #define SCAUSE_EXTERNAL  9
+#define SSTATUS_UXL_64   (2UL << 32)
 
 extern void riscv_trap_entry(void);
 
 void trap_init(void)
 {
-	/* stvec 低两位为 0：所有 trap 都从同一个入口开始。 */
-	asm volatile("csrw stvec, %0" : : "r"(riscv_trap_entry) : "memory");
+	/* 内核执行时 sscratch 为零。stvec 低两位为零，使用统一入口。 */
+	asm volatile("csrw sscratch, zero\n\t"
+		     "csrw stvec, %0" : : "r"(riscv_trap_entry) : "memory");
+}
+
+struct arch_thread_context *arch_init_user_thread(void *stack_top, void (*start)(void),
+						 uintptr_t user_pc, uintptr_t user_sp)
+{
+	struct pt_regs *regs = (struct pt_regs *)((char *)stack_top - USER_FRAME_SIZE);
+
+	memset(regs, 0, sizeof(*regs));
+	regs->epc = user_pc;
+	regs->x[2] = user_sp;
+	/* SPP 为零，SPIE 置位，首次 sret 进入 U 模式。 */
+	regs->status = SSTATUS_UXL_64 | SSTATUS_SPIE;
+	return arch_init_thread(regs, start);
 }
 
 void arch_local_irq_enable(void)

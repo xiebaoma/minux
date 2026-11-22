@@ -18,6 +18,8 @@ uintptr_t arch_user_limit(void);
 
 /* 运行时页表共享内核映射。只在页表未启用时修改或释放。 */
 struct arch_pgd *arch_pgd_alloc(void);
+/* 关本地中断时启用根表，并同步地址翻译。NULL 选择内核根表。 */
+void arch_pgd_activate(struct arch_pgd *pgd);
 /* 成功后接管一个 order-0 用户数据页，失败时页表和页归属不变。 */
 bool arch_pgd_map(struct arch_pgd *pgd, uintptr_t va, struct page *page,
 		  unsigned int vm_flags);

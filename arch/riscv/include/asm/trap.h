@@ -9,6 +9,15 @@
 #define PT_REGS_TVAL_OFFSET    280
 #define PT_REGS_SIZE           288
 
+/* 用户 trap 现场上方还有一段空间，用于保留内核 gp 和 tp。 */
+#define USER_FRAME_GP_OFFSET   PT_REGS_SIZE
+#define USER_FRAME_TP_OFFSET   (PT_REGS_SIZE + 8)
+#define USER_FRAME_SIZE        (PT_REGS_SIZE + 16)
+
+#define SSTATUS_SIE            (1 << 1)
+#define SSTATUS_SPIE           (1 << 5)
+#define SSTATUS_SPP            (1 << 8)
+
 #ifndef __ASSEMBLER__
 
 #include <minux/stddef.h>

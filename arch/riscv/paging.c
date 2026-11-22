@@ -36,6 +36,15 @@ bool arch_virt_to_phys(const void *addr, u64 *phys)
 	return true;
 }
 
+void arch_pgd_activate(struct arch_pgd *pgd)
+{
+	const void *root = pgd ? (const void *)pgd : (const void *)kernel_root;
+	u64 root_pa;
+
+	if (!arch_virt_to_phys(root, &root_pa) || !sv39_enable(root_pa))
+		panic("cannot activate Sv39 page table %p", root);
+}
+
 static void map_range(struct boot_paging *paging, uintptr_t va, u64 start,
 		      u64 end, unsigned int prot)
 {

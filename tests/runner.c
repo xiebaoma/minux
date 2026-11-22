@@ -89,6 +89,7 @@ void run_selftests(void)
 void run_runtime_selftests(void)
 {
 	run_suite("preempt", test_preempt);
+	run_suite("user preempt", test_user_preempt);
 	test_puts("==== ");
 	test_putu(all_total - all_failures);
 	test_puts("/");

@@ -7,6 +7,7 @@
 #define TASK_STACK_ORDER 2
 
 struct arch_thread_context;
+struct mm_struct;
 struct page;
 
 enum task_state {
@@ -19,10 +20,11 @@ enum task_state {
 struct task_struct {
 	enum task_state state;
 	struct list_head run_list; /* 就绪队列和等待队列共用此节点。 */
-	struct arch_thread_context *context;	//记录的是任务上次切出时保存下来的 sp。它指向任务自己内核栈上的一块 112 字节的现场：
+	struct arch_thread_context *context; /* 架构保存在内核栈上的切换现场。 */
 	struct page *stack_page;				//指向内核栈分配块的首个页描述符。Minux 为每个新线程分配 4 个连续页，共 16 KiB。创建时用 page_address() 从描述符取得栈底地址，销毁时用它把整块页还给 buddy 分配器。
 	void (*entry)(void *);					//线程入口函数指针。指向一个接收 void * 参数、返回类型为 void 的函数。
 	void *arg;								//传给入口函数的参数。通常指向调用者准备的数据，也可以传 NULL。
+	struct mm_struct *mm; /* 用户任务拥有独立地址空间；内核任务使用 NULL。 */
 };
 
 /* 启动时调用一次，将当前启动栈交给首个任务。 */
@@ -36,6 +38,12 @@ struct task_struct *task_current(void);
  * 例如在同一个关中断区间内创建任务并操作其初始状态。
  */
 struct task_struct *task_create(void (*entry)(void *), void *arg);
+/*
+ * 从已映射的入口和符合用户 ABI 的栈指针启动用户任务。
+ * 成功后任务接管独占的 mm，失败时 mm 仍归调用者。返回值同样是借用指针。
+ */
+struct task_struct *task_create_user(struct mm_struct *mm, uintptr_t user_pc,
+				     uintptr_t user_sp);
 /* 销毁队列中尚未退出的任务。调用者须确保任务指针仍然有效。 */
 bool task_destroy(struct task_struct *task);
 
