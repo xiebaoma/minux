@@ -191,6 +191,34 @@ struct task_struct *task_create_user(struct mm_struct *mm, uintptr_t user_pc,
 	return task;
 }
 
+int task_fork(const struct pt_regs *regs)
+{
+	unsigned long flags = arch_local_irq_save();
+	struct task_struct *child;
+	int pid = -EAGAIN;
+
+	if (next_user_pid > INT_MAX)
+		goto out;
+	pid = -ENOMEM;
+	child = task_alloc();
+	if (!child)
+		goto out;
+	child->mm = mm_dup(current_task->mm);
+	if (!child->mm) {
+		task_release_resources(child);
+		kfree(child);
+		goto out;
+	}
+	child->context = arch_init_fork_thread(task_stack_top(child), task_start, regs);
+	child->parent = current_task;
+	pid = next_user_pid++;
+	child->pid = pid;
+	task_publish(child);
+out:
+	arch_local_irq_restore(flags);
+	return pid;
+}
+
 bool task_destroy(struct task_struct *task)
 {
 	unsigned long flags;

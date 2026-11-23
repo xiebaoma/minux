@@ -24,6 +24,7 @@
     .globl wait_probe_start, wait_probe_end
     .globl wait_probe_parent_first, wait_probe_child_first
     .globl wait_probe_parent_fault, wait_probe_parent_orphans
+    .globl wait_probe_fork, wait_probe_fork_oom
     .globl wait_probe_child, wait_probe_fault
 wait_probe_start:
 wait_probe_parent_first:
@@ -100,6 +101,87 @@ wait_probe_parent_fault:
     li      t1, SIGTRAP
     bne     t0, t1, .Lfail
     j       .Ldone
+
+wait_probe_fork_oom:
+    li      a7, __NR_clone
+    li      a0, SIGCHLD
+    li      a1, 0
+    ecall
+    li      t0, -ENOMEM
+    bne     a0, t0, .Lfail
+    addi    sp, sp, -16
+    sd      t0, 0(sp)
+    li      s0, -1
+    wait4   s0, zero, WNOHANG
+    li      t0, -ECHILD
+    bne     a0, t0, .Lfail
+    j       .Ldone
+
+wait_probe_fork:
+    addi    sp, sp, -32
+    li      a7, __NR_getpid
+    ecall
+    mv      s1, a0
+    li      s2, FORK_PROBE_ROUNDS
+
+    li      a7, __NR_clone
+    li      a0, SIGCHLD
+    mv      a1, sp              /* 自定义子栈超出当前 fork 子集。 */
+    ecall
+    li      t0, -EINVAL
+    bne     a0, t0, .Lfail
+    li      a0, 0x111           /* CLONE_VM | SIGCHLD */
+    li      a1, 0
+    ecall
+    li      t0, -EINVAL
+    bne     a0, t0, .Lfail
+.Lfork_round:
+    sd      s2, 0(sp)
+    li      s3, 0x1234
+    sd      s3, 8(sp)
+    li      a0, SIGCHLD
+    li      a1, 0
+    li      a7, __NR_clone
+    ecall
+    beqz    a0, .Lfork_child
+    bltz    a0, .Lfail
+    mv      s0, a0
+    beq     s0, s1, .Lfail
+    andi    t0, s2, 1
+    beqz    t0, .Luser_store
+    mv      a0, sp              /* copy_to_user 是 fork 后对共享栈的第一次写。 */
+    addi    a1, sp, 8
+    li      a2, 8
+    li      a7, __NR_test_copy
+    ecall
+    bnez    a0, .Lfail
+    j       .Lfork_wait
+.Luser_store:
+    sd      s3, 0(sp)           /* 父进程直接写，期间没有切换页表。 */
+.Lfork_wait:
+    addi    s4, sp, 16
+    wait4   s0, s4
+    bne     a0, s0, .Lfail
+    andi    t0, s0, 63
+    ori     t0, t0, 64
+    slli    t0, t0, 8
+    lw      t1, 0(s4)
+    bne     t0, t1, .Lfail
+    ld      t0, 0(sp)
+    bne     t0, s3, .Lfail
+    addi    s2, s2, -1
+    bnez    s2, .Lfork_round
+    j       .Ldone
+.Lfork_child:
+    ld      t0, 0(sp)
+    bne     t0, s2, .Lfail      /* 仍读到 fork 时的栈内容。 */
+    sd      zero, 0(sp)
+    li      a7, __NR_getpid
+    ecall
+    beq     a0, s1, .Lfail
+    andi    a0, a0, 63
+    ori     a0, a0, 64
+    j       .Lexit
 
 wait_probe_parent_orphans:
     probe_action WAIT_PROBE_SPAWN_EXITED

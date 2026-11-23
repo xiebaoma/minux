@@ -1,5 +1,6 @@
 #include <asm/sv39.h>
 #include <minux/buddy.h>
+#include <minux/bug.h>
 #include <minux/memblock.h>
 #include <minux/mm.h>
 #include <minux/paging.h>
@@ -14,6 +15,7 @@
 #define PTE_USER     (1ULL << 4)
 #define PTE_ACCESSED (1ULL << 6)
 #define PTE_DIRTY    (1ULL << 7)
+#define PTE_COW      (1ULL << 8) /* RSW 软件位。 */
 #define PTE_PPN_SHIFT 10
 #define PTE_PPN_MASK ((1ULL << SV39_PPN_BITS) - 1)
 #define PTE_LEAF (SV39_READ | SV39_WRITE | SV39_EXEC)
@@ -211,6 +213,67 @@ bool arch_pgd_map(struct arch_pgd *pgd, uintptr_t va, struct page *page,
 	return true;
 }
 
+//如果页表项原本可写，就清除写权限、加上 PTE_COW 标记；原本不可写的项保持不变。
+static u64 write_protect(u64 pte)
+{
+	return (pte & SV39_WRITE) ? ((pte & ~SV39_WRITE) | PTE_COW) : pte;
+}
+
+//逐项复制页表
+static bool clone_user_entries(struct sv39_table *dst, const struct sv39_table *src,
+			       unsigned int count)
+{
+	for (unsigned int i = 0; i < count; i++) {
+		u64 pte = src->entries[i];
+		void *addr;
+		struct page *page;
+		struct sv39_table *child;
+
+		if (!(pte & PTE_VALID))
+			continue;
+		addr = arch_phys_to_virt(pte_phys(pte));
+		if (pte & PTE_LEAF) {
+			if (!get_page(virt_to_page(addr)))
+				return false;
+			dst->entries[i] = write_protect(pte);
+			continue;
+		}
+		page = alloc_pages(0);
+		if (!page)
+			return false;
+		child = memset(page_address(page), 0, PAGE_SIZE);
+		/* 先挂入空子表，使失败路径能从根表释放所有已取得的引用。 */
+		dst->entries[i] = pte_encode_pa(page_to_phys(page)) | PTE_VALID;
+		if (!clone_user_entries(child, addr, SV39_ENTRIES))
+			return false;
+	}
+	return true;
+}
+
+static void protect_user_entries(struct sv39_table *table, unsigned int count)
+{
+	for (unsigned int i = 0; i < count; i++) {
+		u64 pte = table->entries[i];
+
+		if (!(pte & PTE_VALID))
+			continue;
+		if (pte & PTE_LEAF)
+			table->entries[i] = write_protect(pte);
+		else
+			protect_user_entries(arch_phys_to_virt(pte_phys(pte)), SV39_ENTRIES);
+	}
+}
+
+bool arch_pgd_fork(struct arch_pgd *dst, struct arch_pgd *src)
+{
+	if (!clone_user_entries(&dst->root, &src->root, SV39_ENTRIES / 2))
+		return false;
+	//递归遍历父页表，把父进程原本可写的叶项也改为 COW。
+	protect_user_entries(&src->root, SV39_ENTRIES / 2);
+	asm volatile("sfence.vma" : : : "memory");
+	return true;
+}
+
 static void free_user_entries(struct sv39_table *table, unsigned int count)
 {
 	for (unsigned int i = 0; i < count; i++) {
@@ -220,9 +283,12 @@ static void free_user_entries(struct sv39_table *table, unsigned int count)
 		if (!(pte & PTE_VALID))
 			continue;
 		addr = arch_phys_to_virt(pte_phys(pte));
-		if (!(pte & PTE_LEAF))
+		if (pte & PTE_LEAF) {
+			put_page(virt_to_page(addr));
+		} else {
 			free_user_entries(addr, SV39_ENTRIES);
-		free_pages(virt_to_page(addr), 0);
+			free_pages(virt_to_page(addr), 0);
+		}
 	}
 }
 
@@ -233,35 +299,36 @@ void arch_pgd_free(struct arch_pgd *pgd)
 	free_pages(virt_to_page(pgd), 0);
 }
 
-static u64 sv39_find_leaf(const struct sv39_table *root, uintptr_t va, u64 *pa)
+static const u64 *sv39_find_leaf(const struct sv39_table *root, uintptr_t va, u64 *pa)
 {
 	const struct sv39_table *table = root;
 
 	if (!root || !canonical(va))
-		return 0;
+		return NULL;
 	for (int level = SV39_LEVELS - 1; level >= 0; level--) {
-		u64 pte = table->entries[vpn_index(va, level)];
+		const u64 *entry = &table->entries[vpn_index(va, level)];
+		u64 pte = *entry;
 
 		if (!(pte & PTE_VALID))
-			return 0;
+			return NULL;
 		if (pte & PTE_LEAF) {
 			if (pa)
 				*pa = pte_phys(pte) | (va & (sv39_level_size(level) - 1));
-			return pte;
+			return entry;
 		}
 		table = arch_phys_to_virt(pte_phys(pte));
 	}
-	return 0;
+	return NULL;
 }
 
 bool sv39_lookup(const struct sv39_table *root, uintptr_t va, u64 *pa,
 		 unsigned int *prot)
 {
-	u64 pte = sv39_find_leaf(root, va, pa);
+	const u64 *entry = sv39_find_leaf(root, va, pa);
 
-	if (pte && prot)
-		*prot = pte & PTE_LEAF;
-	return pte != 0;
+	if (entry && prot)
+		*prot = *entry & PTE_LEAF;
+	return entry != NULL;
 }
 
 //这个函数查询某个用户虚拟地址在页表中映射到了哪一页，
@@ -270,16 +337,18 @@ bool sv39_lookup(const struct sv39_table *root, uintptr_t va, u64 *pa,
 struct page *arch_pgd_user_page(const struct arch_pgd *pgd, uintptr_t va,
 				unsigned int *access)
 {
+	const u64 *entry;
 	u64 pte;
 
 	//地址不在用户地址范围内，返回 NULL。
 	if (va >= SV39_LOW_END)
 		return NULL;
-	pte = sv39_find_leaf(&pgd->root, va, NULL);
-	if (!(pte & PTE_USER))
+	entry = sv39_find_leaf(&pgd->root, va, NULL);
+	if (!entry || !(*entry & PTE_USER))
 		return NULL;
+	pte = *entry;
 	if (access) {
-		*access = 0;
+		*access = (pte & PTE_COW) ? PGD_COW : 0;
 		if (pte & SV39_READ)
 			*access |= VM_READ;
 		if (pte & SV39_WRITE)
@@ -288,6 +357,19 @@ struct page *arch_pgd_user_page(const struct arch_pgd *pgd, uintptr_t va,
 			*access |= VM_EXEC;
 	}
 	return virt_to_page(arch_phys_to_virt(pte_phys(pte)));
+}
+
+void arch_pgd_resolve_cow(struct arch_pgd *pgd, uintptr_t va, struct page *page)
+{
+	u64 *entry = (u64 *)sv39_find_leaf(&pgd->root, va, NULL);
+	u64 flags;
+
+	BUG_ON(va >= SV39_LOW_END || !entry || !(*entry & PTE_COW));
+	flags = *entry & ~((PTE_PPN_MASK << PTE_PPN_SHIFT) | PTE_COW);
+	*entry = pte_encode_pa(page_to_phys(page)) | flags | SV39_WRITE | PTE_DIRTY;
+	asm volatile("sfence.vma %0, zero" : : "r"(va) : "memory");
+	if (flags & SV39_EXEC)
+		asm volatile("fence.i" : : : "memory");
 }
 
 bool sv39_enable(u64 root_pa)

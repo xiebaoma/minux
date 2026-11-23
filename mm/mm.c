@@ -34,6 +34,41 @@ void mm_destroy(struct mm_struct *mm)
 	kfree(mm);
 }
 
+static struct vm_area_struct *insert_vma(struct mm_struct *mm, struct list_head *pos,
+					uintptr_t start, uintptr_t end, unsigned int flags)
+{
+	struct vm_area_struct *vma = kmalloc(sizeof(*vma));
+
+	if (!vma)
+		return NULL;
+	vma->vm_start = start;
+	vma->vm_end = end;
+	vma->vm_flags = flags;
+	vma->vm_mm = mm;
+	list_add_tail(&vma->vm_link, pos);
+	return vma;
+}
+
+struct mm_struct *mm_dup(struct mm_struct *src)
+{
+	struct mm_struct *dst = mm_alloc();
+	const struct vm_area_struct *vma;
+
+	if (!dst)
+		return NULL;
+	list_for_each_entry(vma, &src->vmas, vm_link) {
+		/* 源链表已按地址排序，可直接追加到副本。 */
+		if (!insert_vma(dst, &dst->vmas, vma->vm_start, vma->vm_end, vma->vm_flags))
+			goto fail;
+	}
+	if (!arch_pgd_fork(dst->pgd, src->pgd))
+		goto fail;
+	return dst;
+fail:
+	mm_destroy(dst);
+	return NULL;
+}
+
 const struct vm_area_struct *mm_add_vma(struct mm_struct *mm, uintptr_t start,
 				       uintptr_t end, unsigned int flags)
 {
@@ -52,15 +87,7 @@ const struct vm_area_struct *mm_add_vma(struct mm_struct *mm, uintptr_t start,
 		if (start < vma->vm_end)
 			return NULL;
 	}
-	vma = kmalloc(sizeof(*vma));
-	if (!vma)
-		return NULL;
-	vma->vm_start = start;
-	vma->vm_end = end;
-	vma->vm_flags = flags;
-	vma->vm_mm = mm;
-	list_add_tail(&vma->vm_link, pos);
-	return vma;
+	return insert_vma(mm, pos, start, end, flags);
 }
 
 const struct vm_area_struct *find_vma(const struct mm_struct *mm, uintptr_t addr)
@@ -100,6 +127,24 @@ struct page *mm_populate_page(struct mm_struct *mm, uintptr_t addr)
 	return populate_vma_page(vma, addr);
 }
 
+// 在进程要写一个写时复制页时，给这个进程准备可写的映射。
+static struct page *resolve_cow(struct mm_struct *mm, uintptr_t addr, struct page *old)
+{
+	struct page *page = old;
+
+	if (page_ref_count(old) > 1) {
+		page = alloc_pages(0);
+		if (!page)
+			return NULL;
+		memcpy(page_address(page), page_address(old), PAGE_SIZE);
+	}
+	//修改页表项
+	arch_pgd_resolve_cow(mm->pgd, addr, page);
+	if (page != old)
+		put_page(old);
+	return page;
+}
+
 static struct page *resolve_user_page(struct mm_struct *mm, uintptr_t addr,
 				      unsigned int access, bool fault)
 {
@@ -111,7 +156,9 @@ static struct page *resolve_user_page(struct mm_struct *mm, uintptr_t addr,
 	    (vma->vm_flags & access) != access)
 		return NULL;
 	page = arch_pgd_user_page(mm->pgd, addr, &mapped_access);
-	/* 已有映射上的硬件异常不能靠补页解决。 */
+	if (page && (access & VM_WRITE) && (mapped_access & PGD_COW) &&
+	    ((mapped_access | VM_WRITE) & access) == access)
+		return resolve_cow(mm, addr, page);
 	if (page)
 		return !fault && (mapped_access & access) == access ? page : NULL;
 	if (!(vma->vm_flags & VM_ANON))

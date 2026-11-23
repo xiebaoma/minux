@@ -1,5 +1,6 @@
 #include <minux/errno.h>
 #include <minux/syscall.h>
+#include <minux/signal.h>
 #include <minux/task.h>
 #include <minux/uaccess.h>
 
@@ -11,6 +12,13 @@ long sys_getpid(void)
 void sys_exit(int code)
 {
 	task_exit_current((code & 0xff) << 8);
+}
+
+long sys_clone(unsigned long flags, uintptr_t stack, const struct pt_regs *regs)
+{
+	if (flags != SIGCHLD || stack)
+		return -EINVAL;
+	return task_fork(regs);
 }
 
 long sys_wait4(int pid, uintptr_t status_addr, int options, uintptr_t rusage_addr)

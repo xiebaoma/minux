@@ -2,6 +2,8 @@
 #define _MINUX_ERRNO_H
 
 #define ECHILD 10
+#define EAGAIN 11
+#define ENOMEM 12
 #define EFAULT 14
 #define EINVAL 22
 #define ENOSYS 38

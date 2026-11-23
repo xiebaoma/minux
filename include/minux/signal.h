@@ -6,5 +6,6 @@
 #define SIGTRAP  5
 #define SIGBUS   7
 #define SIGSEGV 11
+#define SIGCHLD 17
 
 #endif /* _MINUX_SIGNAL_H */

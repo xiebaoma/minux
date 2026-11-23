@@ -51,6 +51,18 @@ struct arch_thread_context *arch_init_user_thread(void *stack_top, void (*start)
 	return arch_init_thread(regs, start);
 }
 
+//为 fork 出来的子进程准备第一次运行时的内核栈和寄存器现场。
+struct arch_thread_context *arch_init_fork_thread(void *stack_top, void (*start)(void),
+						 const struct pt_regs *parent)
+{
+	struct pt_regs *regs = (struct pt_regs *)((char *)stack_top - USER_FRAME_SIZE);
+
+	/* 系统调用入口已将 epc 移到 ecall 之后，子进程从同一处返回 0。 */
+	*regs = *parent;
+	regs->x[10] = 0;
+	return arch_init_thread(regs, start);
+}
+
 void arch_local_irq_enable(void)
 {
 	/* 各来源在 sie 单独开启；此处打开 S 模式的总开关。 */

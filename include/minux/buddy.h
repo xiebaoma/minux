@@ -16,6 +16,10 @@ bool buddy_init(struct memblock *map);
 struct page *alloc_pages(unsigned int order);
 /* 传入原块首帧及分配时的 order。参数无效时返回 false。 */
 bool free_pages(struct page *page, unsigned int order);
+/* 共享 order-0 数据页。分配时持有一个引用，最后一次 put_page 归还物理页。 */
+bool get_page(struct page *page);
+void put_page(struct page *page);
+unsigned int page_ref_count(const struct page *page);
 u64 page_to_phys(const struct page *page);
 
 /* 返回 RAM 线性映射中的页首地址。 */

@@ -2,6 +2,7 @@
 #include <minux/mm.h>
 #include <minux/page.h>
 #include <minux/paging.h>
+#include <minux/string.h>
 #include "test.h"
 
 static void test_vmas(void)
@@ -47,8 +48,8 @@ static void test_vmas(void)
 	mm_destroy(mm);
 }
 
-struct held_page {
-	struct held_page *next;
+struct test_held_page {
+	struct test_held_page *next;
 	struct page *page;
 };
 
@@ -84,11 +85,38 @@ static void test_anonymous_faults(void)
 	mm_destroy(mm);
 }
 
+struct test_held_page *test_hold_all_but(u64 keep)
+{
+	struct test_held_page *held = NULL;
+
+	for (u64 remaining = buddy_free_pages(); remaining > keep; remaining--) {
+		struct test_held_page *node;
+		struct page *page = alloc_pages(0);
+
+		if (!page)
+			break;
+		node = page_address(page);
+		*node = (struct test_held_page){ held, page };
+		held = node;
+	}
+	return held;
+}
+
+void test_release_held(struct test_held_page *held)
+{
+	while (held) {
+		struct test_held_page *node = held;
+
+		held = node->next;
+		free_pages(node->page, 0);
+	}
+}
+
 static void test_population_failure(void)
 {
 	const uintptr_t addr = PAGE_SIZE;
 	struct mm_struct *mm = mm_alloc();
-	struct held_page *held = NULL;
+	struct test_held_page *held = NULL;
 	struct page *page;
 	u64 before;
 
@@ -99,24 +127,10 @@ static void test_population_failure(void)
 	}
 	before = buddy_free_pages();
 	/* 留两页给数据页和第一张子表，让第二张子表分配失败。 */
-	for (u64 remaining = before; remaining > 2; remaining--) {
-		struct held_page *node;
-
-		page = alloc_pages(0);
-		if (!page)
-			break;
-		node = page_address(page);
-		*node = (struct held_page){ held, page };
-		held = node;
-	}
+	held = test_hold_all_but(2);
 	check(buddy_free_pages() == 2 && !mm_populate_page(mm, addr) &&
 	      buddy_free_pages() == 2, "mm: failed population returns data and child table pages");
-	while (held) {
-		struct held_page *node = held;
-
-		held = node->next;
-		free_pages(node->page, 0);
-	}
+	test_release_held(held);
 	check(buddy_free_pages() == before, "mm: release all pages held by the failure test");
 	page = mm_populate_page(mm, addr);
 	check(page && buddy_free_pages() == before - 3,
@@ -136,6 +150,79 @@ static void test_population_failure(void)
 	mm_destroy(mm);
 }
 
+static void test_fork_cow(void)
+{
+	const uintptr_t data = PAGE_SIZE, hole = 2 * PAGE_SIZE, code = arch_user_limit() / 2;
+	const unsigned int rw = VM_READ | VM_WRITE;
+	struct mm_struct *parent = mm_alloc(), *child = NULL, *grandchild = NULL;
+	struct page *original, *text, *copy;
+	struct test_held_page *held;
+	unsigned int access;
+
+	if (!parent || !mm_add_vma(parent, data, hole + PAGE_SIZE, rw | VM_ANON) ||
+	    !mm_add_vma(parent, code, code + PAGE_SIZE, VM_READ | VM_EXEC))
+		goto setup_failed;
+	original = mm_populate_page(parent, data);
+	text = mm_populate_page(parent, code);
+	if (!original || !text)
+		goto setup_failed;
+	memset(page_address(original), 0x5a, PAGE_SIZE);
+
+	/* 根表和低地址子表能建成，到远端映射前耗尽，检查部分构造的回滚。 */
+	held = test_hold_all_but(3);
+	child = mm_dup(parent);
+	check(!child && buddy_free_pages() == 3 && page_ref_count(original) == 1 &&
+	      arch_pgd_user_page(parent->pgd, data, &access) == original && access == rw,
+	      "fork: partial clone failure restores references and parent write access");
+	test_release_held(held);
+	if (child)
+		goto out;
+
+	child = mm_dup(parent);
+	if (child)
+		grandchild = mm_dup(child);
+	if (!grandchild)
+		goto setup_failed;
+	check(page_ref_count(original) == 3 &&
+	      arch_pgd_user_page(parent->pgd, data, &access) == original && access == (VM_READ | PGD_COW) &&
+	      arch_pgd_user_page(child->pgd, data, &access) == original && access == (VM_READ | PGD_COW) &&
+	      arch_pgd_user_page(grandchild->pgd, data, &access) == original && access == (VM_READ | PGD_COW),
+	      "fork: three generations share a write-protected data page");
+	check(arch_pgd_user_page(child->pgd, code, &access) == text && access == (VM_READ | VM_EXEC) &&
+	      page_ref_count(text) == 3 && !mm_handle_user_fault(child, code, VM_WRITE) &&
+	      !mm_user_page(child, code, VM_WRITE), "fork: shared text remains read-only");
+	check(!arch_pgd_user_page(child->pgd, hole, NULL) && mm_user_page(child, hole, VM_WRITE) &&
+	      !arch_pgd_user_page(parent->pgd, hole, NULL),
+	      "fork: a sparse anonymous VMA faults in independently");
+
+	held = test_hold_all_but(0);
+	check(!mm_handle_user_fault(child, data, VM_WRITE) && !mm_user_page(child, data, VM_WRITE) &&
+	      arch_pgd_user_page(child->pgd, data, &access) == original && access == (VM_READ | PGD_COW) &&
+	      page_ref_count(original) == 3, "cow: a failed write leaves the shared page intact");
+	test_release_held(held);
+	copy = mm_user_page(child, data, VM_WRITE);
+	check(copy && copy != original && page_ref_count(original) == 2 &&
+	      memcmp(page_address(copy), page_address(original), PAGE_SIZE) == 0,
+	      "cow: retry copies all bytes into one private writable page");
+	if (copy)
+		*(u8 *)page_address(copy) = 0xa5;
+	check(*(u8 *)page_address(original) == 0x5a, "cow: private write preserves the original data");
+	mm_destroy(grandchild);
+	grandchild = NULL;
+	held = test_hold_all_but(0);
+	check(page_ref_count(original) == 1 && mm_handle_user_fault(parent, data, VM_WRITE) &&
+	      arch_pgd_user_page(parent->pgd, data, &access) == original && access == rw,
+	      "cow: the sole owner regains write access even with no free pages");
+	test_release_held(held);
+	goto out;
+setup_failed:
+	check(false, "fork: prepare address spaces for COW");
+out:
+	mm_destroy(grandchild);
+	mm_destroy(child);
+	mm_destroy(parent);
+}
+
 void test_mm(void)
 {
 	u64 before = buddy_free_pages();
@@ -143,5 +230,6 @@ void test_mm(void)
 	test_vmas();
 	test_population_failure();
 	test_anonymous_faults();
+	test_fork_cow();
 	check(buddy_free_pages() == before, "mm: destruction returns every private page");
 }

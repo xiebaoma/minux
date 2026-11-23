@@ -17,6 +17,11 @@ void check(bool ok, const char *what);
 /* 临时输出函数：还没有 printk，先直接走 SBI。有了 printk 后换掉 */
 void test_puts(const char *s);
 
+/* 用物理页本身记录分配，以便在真实内存耗尽条件下测试回滚。 */
+struct test_held_page;
+struct test_held_page *test_hold_all_but(u64 keep);
+void test_release_held(struct test_held_page *held);
+
 /* ---- 测试套件 ---- */
 void test_string(void);
 void test_list(void);

@@ -10,6 +10,7 @@
 
 struct arch_thread_context;
 struct mm_struct;
+struct pt_regs;
 struct page;
 
 enum task_state {
@@ -54,6 +55,7 @@ struct task_struct *task_create(void (*entry)(void *), void *arg);
  */
 struct task_struct *task_create_user(struct mm_struct *mm, uintptr_t user_pc,
 				     uintptr_t user_sp);
+int task_fork(const struct pt_regs *regs);
 /* 销毁队列中尚未退出的任务。调用者须确保任务指针仍然有效。 */
 bool task_destroy(struct task_struct *task);
 /* 切走并释放执行资源，将编码后的状态留给仍在的父进程。 */

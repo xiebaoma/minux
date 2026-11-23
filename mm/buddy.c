@@ -1,4 +1,5 @@
 #include <minux/buddy.h>
+#include <minux/bug.h>
 #include <minux/limits.h>
 #include <minux/memblock.h>
 #include <minux/page.h>
@@ -132,13 +133,14 @@ struct page *alloc_pages(unsigned int order)
 	page->state = PAGE_ALLOCATED_HEAD;
 	page->order = order;
 	page->owner = PAGE_OWNER_BUDDY;
+	page->refs = 1;
 
 out_unlock:
 	spin_unlock_irqrestore(&buddy_lock, flags);
 	return page;
 }
 
-bool free_pages(struct page *page, unsigned int order)
+static bool release_pages(struct page *page, unsigned int order, bool put_ref)
 {
 	uintptr_t base = (uintptr_t)page_map;
 	uintptr_t addr = (uintptr_t)page;
@@ -151,8 +153,16 @@ bool free_pages(struct page *page, unsigned int order)
 	    (addr - base) % sizeof(*page))
 		return false;
 	flags = spin_lock_irqsave(&buddy_lock);
-	if (page->state != PAGE_ALLOCATED_HEAD || page->order != order)
+	if (page->state != PAGE_ALLOCATED_HEAD || page->order != order ||
+	    (put_ref && page->owner != PAGE_OWNER_BUDDY))
 		goto out_unlock;
+	if (page->refs > 1) {
+		if (put_ref) {
+			page->refs--;
+			freed = true;
+		}
+		goto out_unlock;
+	}
 	bank = find_bank(page->pfn);
 	page->state = PAGE_BLOCK_TAIL;
 
@@ -177,6 +187,38 @@ bool free_pages(struct page *page, unsigned int order)
 out_unlock:
 	spin_unlock_irqrestore(&buddy_lock, flags);
 	return freed;
+}
+
+bool free_pages(struct page *page, unsigned int order)
+{
+	return release_pages(page, order, false);
+}
+
+bool get_page(struct page *page)
+{
+	unsigned long flags = spin_lock_irqsave(&buddy_lock);
+	bool ok = page->state == PAGE_ALLOCATED_HEAD && page->order == 0 &&
+		  page->owner == PAGE_OWNER_BUDDY && page->refs < UINT_MAX;
+
+	if (ok)
+		page->refs++;
+	spin_unlock_irqrestore(&buddy_lock, flags);
+	return ok;
+}
+
+//最后一个 put page 应用减为0
+void put_page(struct page *page)
+{
+	BUG_ON(!release_pages(page, 0, true));
+}
+
+unsigned int page_ref_count(const struct page *page)
+{
+	unsigned long flags = spin_lock_irqsave(&buddy_lock);
+	unsigned int refs = page->refs;
+
+	spin_unlock_irqrestore(&buddy_lock, flags);
+	return refs;
 }
 
 u64 page_to_phys(const struct page *page)

@@ -30,6 +30,7 @@ struct vm_area_struct {
 
 /* 在 buddy 和 slab 就绪后使用。登记 VMA 和销毁时地址空间须未启用。 */
 struct mm_struct *mm_alloc(void);
+struct mm_struct *mm_dup(struct mm_struct *src);
 void mm_destroy(struct mm_struct *mm);
 
 /* 登记页对齐的 [start, end)。可写区间必须同时可读。返回的 VMA 由 mm 持有。 */
@@ -41,9 +42,9 @@ const struct vm_area_struct *find_vma(const struct mm_struct *mm, uintptr_t addr
 /* 为 VMA 内未映射的页首地址分配零页。成功后页归 mm 持有，失败返回 NULL。 */
 struct page *mm_populate_page(struct mm_struct *mm, uintptr_t addr);
 
-/* 仅在缺少映射且匿名 VMA 允许本次访问时补页。成功后可重试指令。 */
+/* 处理合法匿名缺页或写时复制。成功后可重试指令。 */
 bool mm_handle_user_fault(struct mm_struct *mm, uintptr_t addr, unsigned int access);
-/* 借用可按 access 访问的用户页，必要时补匿名页。页的所有权仍归 mm。 */
+/* 借用可按 access 访问的用户页，必要时补匿名页或完成写时复制。页的所有权仍归 mm。 */
 struct page *mm_user_page(struct mm_struct *mm, uintptr_t addr, unsigned int access);
 
 #endif /* _MINUX_MM_H */

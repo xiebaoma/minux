@@ -15,7 +15,7 @@
 extern const char wait_probe_start[], wait_probe_end[];
 extern const char wait_probe_parent_first[], wait_probe_child_first[];
 extern const char wait_probe_parent_fault[], wait_probe_parent_orphans[];
-extern const char wait_probe_child[], wait_probe_fault[];
+extern const char wait_probe_child[], wait_probe_fault[], wait_probe_fork[], wait_probe_fork_oom[];
 
 static struct {
 	unsigned int blocked_parents;
@@ -98,6 +98,30 @@ long selftest_user_wait(unsigned long action)
 	}
 }
 
+static void test_fork_oom(void)
+{
+	u64 baseline = buddy_free_pages();
+	struct task_struct *parent = create_wait_probe(wait_probe_fork_oom);
+	struct page *stack = alloc_pages(TASK_STACK_ORDER);
+	struct test_held_page *held;
+
+	check(parent && stack, "fork: prepare a parent and reserve one child kernel stack");
+	if (parent && stack) {
+		held = test_hold_all_but(0);
+		free_pages(stack, TASK_STACK_ORDER);
+		observed.parent_done = false;
+		task_idle_once();
+		check(observed.parent_done, "fork: clone returns -ENOMEM, parent writes and wait4 sees no child");
+		test_release_held(held);
+	} else {
+		if (parent)
+			task_destroy(parent);
+		if (stack)
+			free_pages(stack, TASK_STACK_ORDER);
+	}
+	check(buddy_free_pages() == baseline, "fork: failed syscall releases the provisional task and stack");
+}
+
 void test_user_wait(void)
 {
 	static const struct {
@@ -107,6 +131,8 @@ void test_user_wait(void)
 		unsigned int orphans;
 		const char *description;
 	} cases[] = {
+		{ wait_probe_fork, 0, 0, 0,
+		  "fork: repeated user clone, store, kernel copy and wait preserve private stacks and PIDs" },
 		{ wait_probe_parent_first, 1, 0, 0,
 		  "wait4: parent blocks before child exits and wakes with its PID and status" },
 		{ wait_probe_child_first, 0, 3, 0,
@@ -128,8 +154,12 @@ void test_user_wait(void)
 		check(parent != NULL, "wait4: create the user parent probe");
 		if (parent) {
 			task_idle_once();
-			/* idle 可能在回收子进程时才唤醒父进程。 */
-			schedule();
+			/* 每一轮 wait4 都可能由 idle 回收子进程后才唤醒父进程。 */
+			for (unsigned int n = 0; n < FORK_PROBE_ROUNDS; n++) {
+				schedule();
+				if (observed.parent_done)
+					break;
+			}
 		}
 		check(observed.parent_done &&
 		      observed.blocked_parents == cases[i].blocked_parents &&
@@ -139,5 +169,6 @@ void test_user_wait(void)
 		check(task_current() == boot && buddy_free_pages() == free_before,
 		      "wait4: all process records, address spaces and stacks are reclaimed");
 	}
+	test_fork_oom();
 	arch_local_irq_restore(flags);
 }

@@ -17,10 +17,13 @@ enum page_owner {
 };
 
 struct page {
-	/* 空闲块首帧使用链表节点，已分配块首帧使用 owner。 */
+	/* 空闲块首帧使用链表节点，已分配块首帧记录归属与引用计数。 */
 	union {
 		struct list_head buddy_link;
-		enum page_owner owner;
+		struct {
+			enum page_owner owner;
+			unsigned int refs;
+		};
 	};
 	u64 pfn;
 	enum page_state state;
