@@ -2,7 +2,7 @@
 
 Minux 是一个面向 RISC-V 64 的类 Unix 宏内核。它以 Linux 的内核架构为参照，在保持代码精简、可读的前提下，提供与 Linux 兼容的系统调用接口。
 
-> **当前版本 `v0.5`**。Minux 在 QEMU `virt` 单 hart 配置下支持内核线程、时钟抢占、自旋锁和等待队列。多个内核线程可由定时器驱动轮转，阻塞线程可在条件满足后唤醒。
+> **当前版本 `v0.6`**。Minux 在 QEMU `virt` 单 hart 上启动用户态 `/init`。它通过 `clone` 派生子进程，子进程触发写时复制（COW），再用 `execve` 运行内嵌的第二个静态 ELF。父进程通过 `wait4` 回收子进程并核对结果。
 
 ## 设计目标
 
@@ -32,11 +32,19 @@ brew install qemu riscv64-elf-gcc python
 |---|---|
 | `make` | 构建内核镜像 `build/minux.elf` |
 | `make run` | 在 QEMU 中启动（按 `Ctrl-A X` 退出） |
-| `make test` | 在 QEMU 中运行内核自测，验证时钟抢占、等待队列、UART/PLIC 回显及正常退出 |
+| `make test` | 在 QEMU 中运行调度、内存等内核自测，自动核对 `/init` 父子的退出结果、UART/PLIC 回显和正常关机 |
 | `make debug` | 启动 QEMU 并在第一条指令前暂停，GDB 服务监听 `localhost:1234` |
 | `make dump` | 生成反汇编文件 `build/minux.asm` |
 | `make clean` | 清理构建产物 |
 
+普通 `make run` 的串口日志包含以下四行，时钟日志可能穿插其间。子进程返回 42，父进程核对退出状态和 COW 隔离后返回 0，内核继续输出时钟计数。
+
+```text
+user task 1: start /init
+user task 2: exec /bin/child
+user task 2: exit 42
+user task 1: exit 0
+```
 
 ## 目录结构
 
@@ -51,6 +59,7 @@ init/                  通用初始化（start_kernel）
 kernel/                核心子系统（printk、panic、任务与调度）
 lib/                   通用库函数（string、vsprintf）
 mm/                    启动内存表、buddy、slab、虚拟地址空间管理
+user/                  内嵌的用户程序 /init 和 /bin/child
 tests/                 内核自测和 QEMU 串口集成测试
 docs/                  内存管理、调度、FDT、异常与中断设计文档及路线图
 ```

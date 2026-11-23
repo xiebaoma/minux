@@ -28,12 +28,17 @@ _start:
     lw t0, 0(sp)
     li t1, (42 << 8)
     bne t0, t1, .Lfail
+    la t0, child_argv
+    ld t0, 8(t0)                /* 子进程填写 argv[1] 后，父进程仍应读到 NULL。 */
+    bnez t0, .Lfail
     li a0, 0
     j .Lexit
 
 .Lchild:
     la a0, child_path
     la a1, child_argv
+    la t0, argument
+    sd t0, 8(a1)                /* 写共享数据页触发 COW，execve 从私有副本读取参数。 */
     la a2, child_envp
     li a7, __NR_execve
     ecall
@@ -50,5 +55,5 @@ environment: .asciz "MINUX=1"
 
     .data
     .balign 8
-child_argv: .dword child_path, argument, 0
+child_argv: .dword child_path, 0, 0
 child_envp: .dword environment, 0

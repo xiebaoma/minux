@@ -1,4 +1,4 @@
-"""Run kernel selftests and exercise UART reception through QEMU's serial port."""
+"""Verify kernel selftests, the /init process lifecycle and UART reception in QEMU."""
 
 import os
 import re
@@ -93,6 +93,7 @@ def main():
                 proc.kill()
                 proc.wait()
 
+    print("/init clone/COW/execve/exit/wait4 integration test passed")
     print("UART/PLIC integration test passed")
 
 
