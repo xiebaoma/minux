@@ -1,4 +1,5 @@
 #include <minux/buddy.h>
+#include <minux/errno.h>
 #include <minux/mm.h>
 #include <minux/page.h>
 #include <minux/paging.h>
@@ -54,4 +55,33 @@ size_t copy_from_user(void *to, uintptr_t from, size_t size)
 size_t copy_to_user(uintptr_t to, const void *from, size_t size)
 {
 	return copy_user((void *)to, from, size, true);
+}
+
+/* 按页读取，遇到 NUL 即停止，字符串末尾之后的页可以未映射。 */
+long copy_string_from_user(char *to, uintptr_t from, size_t limit)
+{
+	struct mm_struct *mm = task_current()->mm;
+	size_t copied = 0;
+
+	if (!mm)
+		return -EFAULT;
+	while (copied < limit) {
+		size_t offset = from % PAGE_SIZE;
+		size_t count = PAGE_SIZE - offset;
+		struct page *page = mm_user_page(mm, from, VM_READ);
+		const char *src;
+
+		if (!page)
+			return -EFAULT;
+		src = (const char *)page_address(page) + offset;
+		if (count > limit - copied)
+			count = limit - copied;
+		for (size_t i = 0; i < count; i++) {
+			to[copied++] = src[i];
+			if (!src[i])
+				return copied;
+		}
+		from += count;
+	}
+	return -E2BIG;
 }

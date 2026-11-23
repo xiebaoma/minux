@@ -6,6 +6,7 @@
 #include <asm/virt.h>
 #include <minux/buddy.h>
 #include <minux/fdt.h>
+#include <minux/elf.h>
 #include <minux/irq.h>
 #include <minux/limits.h>
 #include <minux/memblock.h>
@@ -285,6 +286,14 @@ static void start_kernel_mapped(void)
 	timer_init(timebase_frequency);
 	arch_local_irq_enable();
 	run_runtime_selftests();
+	/* 首次派发同时建立 idle，确保 /init 能立刻阻塞等待子进程。 */
+	unsigned long flags = arch_local_irq_save();
+	int err = start_init_process();
+
+	if (err)
+		panic("cannot start /init: %d", err);
+	task_idle_once();
+	arch_local_irq_restore(flags);
 	pr_info("timer: %u Hz, timebase: %u Hz\n",
 		TIMER_HZ, timebase_frequency);
 

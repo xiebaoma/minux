@@ -9,6 +9,7 @@ struct pt_regs;
 
 /* 架构在新栈上建立初始现场，首次切入时调用 start。 */
 struct arch_thread_context *arch_init_thread(void *stack_top, void (*start)(void));
+void arch_setup_user_regs(struct pt_regs *regs, uintptr_t user_pc, uintptr_t user_sp);
 /* 同时在内核栈上准备首次进入用户态的寄存器现场。 */
 struct arch_thread_context *arch_init_user_thread(void *stack_top, void (*start)(void),
 						 uintptr_t user_pc, uintptr_t user_sp);

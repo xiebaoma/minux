@@ -55,13 +55,20 @@ test:
 $(KERNEL): $(OBJS) $(ARCH)/kernel.ld
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)
 
+# 用户 ELF 独立链接，保留程序头供内核加载，省去内嵌调试信息。
+$(BUILD)/user/%.elf: $(BUILD)/user/%.o $(ARCH)/user.ld
+	$(LD) -T $(ARCH)/user.ld --no-relax -s -o $@ $<
+
+$(BUILD)/init/images.o: $(BUILD)/user/init.elf $(BUILD)/user/child.elf
+$(BUILD)/init/images.o: CPPFLAGS += -DINIT_ELF='"$(BUILD)/user/init.elf"' -DCHILD_ELF='"$(BUILD)/user/child.elf"'
+
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/%.o: %.S
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 run: $(KERNEL)
 	$(QEMU) $(QEMUFLAGS)
@@ -77,4 +84,5 @@ dump: $(KERNEL)
 clean:
 	rm -rf $(BUILD)
 
--include $(OBJS:.o=.d)
+-include $(OBJS:.o=.d) $(BUILD)/user/init.d $(BUILD)/user/child.d
+.SECONDARY: $(BUILD)/user/init.o $(BUILD)/user/child.o

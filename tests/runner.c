@@ -21,6 +21,7 @@ static const struct test_suite suites[] = {
 	{ "slab",   test_slab },
 	{ "sv39",   test_sv39 },
 	{ "mm",     test_mm },
+	{ "elf",    test_elf },
 	{ "task",   test_task },
 	{ "sched",  test_sched },
 	{ "user wait", test_user_wait },

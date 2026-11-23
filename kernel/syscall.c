@@ -1,4 +1,5 @@
 #include <minux/errno.h>
+#include <minux/printk.h>
 #include <minux/syscall.h>
 #include <minux/signal.h>
 #include <minux/task.h>
@@ -11,6 +12,7 @@ long sys_getpid(void)
 
 void sys_exit(int code)
 {
+	pr_info("user task %d: exit %d\n", task_current()->pid, code & 0xff);
 	task_exit_current((code & 0xff) << 8);
 }
 

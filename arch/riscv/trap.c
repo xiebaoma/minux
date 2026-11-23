@@ -38,16 +38,22 @@ void trap_init(void)
 		     "csrw stvec, %0" : : "r"(riscv_trap_entry) : "memory");
 }
 
-struct arch_thread_context *arch_init_user_thread(void *stack_top, void (*start)(void),
-						 uintptr_t user_pc, uintptr_t user_sp)
+void arch_setup_user_regs(struct pt_regs *regs, uintptr_t user_pc, uintptr_t user_sp)
 {
-	struct pt_regs *regs = (struct pt_regs *)((char *)stack_top - USER_FRAME_SIZE);
-
 	memset(regs, 0, sizeof(*regs));
 	regs->epc = user_pc;
 	regs->x[2] = user_sp;
 	/* SPP 为零，SPIE 置位，首次 sret 进入 U 模式。 */
 	regs->status = SSTATUS_UXL_64 | SSTATUS_SPIE;
+	asm volatile("fence.i" : : : "memory");
+}
+
+struct arch_thread_context *arch_init_user_thread(void *stack_top, void (*start)(void),
+						 uintptr_t user_pc, uintptr_t user_sp)
+{
+	struct pt_regs *regs = (struct pt_regs *)((char *)stack_top - USER_FRAME_SIZE);
+
+	arch_setup_user_regs(regs, user_pc, user_sp);
 	return arch_init_thread(regs, start);
 }
 

@@ -48,6 +48,19 @@ def main():
         # stdin is a pipe, so any echoed bytes must come from the guest UART.
         # Wait for complete log lines so the echo cannot interrupt their output.
         ready = wait_for(b"\r\n", wait_for(b"timer: 10 Hz, timebase: "))
+        # /init may resume after the timer banner. Let its exit log finish before
+        # injecting characters so kernel output cannot split the UART echo.
+        init = re.search(rb"user task (\d+): start /init\r\n", output)
+        if not init:
+            raise RuntimeError("missing /init launch")
+        child_marker = b": exec /bin/child\r\n"
+        wait_for(child_marker, init.end())
+        child = re.compile(rb"user task (\d+): exec /bin/child\r\n").search(output, init.end())
+        if not child or child[1] == init[1]:
+            raise RuntimeError("/init did not exec a separate child")
+        child_done = wait_for(b"user task " + child[1] + b": exit 42\r\n", child.end())
+        init_done = wait_for(b"user task " + init[1] + b": exit 0\r\n", child_done)
+        ready = max(ready, init_done)
         proc.stdin.write(FIRST)
         proc.stdin.flush()
         first_end = wait_for(FIRST, ready)

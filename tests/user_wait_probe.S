@@ -24,7 +24,8 @@
     .globl wait_probe_start, wait_probe_end
     .globl wait_probe_parent_first, wait_probe_child_first
     .globl wait_probe_parent_fault, wait_probe_parent_orphans
-    .globl wait_probe_fork, wait_probe_fork_oom
+    .globl wait_probe_fork, wait_probe_fork_oom, wait_probe_exec_errors
+    .globl wait_probe_exec
     .globl wait_probe_child, wait_probe_fault
 wait_probe_start:
 wait_probe_parent_first:
@@ -102,6 +103,79 @@ wait_probe_parent_fault:
     bne     t0, t1, .Lfail
     j       .Ldone
 
+wait_probe_exec:
+    addi    sp, sp, -32
+    li      a0, SIGCHLD
+    li      a1, 0
+    li      a7, __NR_clone
+    ecall
+    bltz    a0, .Lfail
+    beqz    a0, .Lexec_init
+    mv      s0, a0
+    wait4   s0, sp
+    bne     a0, s0, .Lfail
+    lw      t0, 0(sp)
+    bnez    t0, .Lfail
+    j       .Ldone
+.Lexec_init:
+    la      a0, .Linit_path
+    sd      a0, 0(sp)
+    sd      zero, 8(sp)
+    mv      a1, sp
+    li      a2, 0
+    li      a7, __NR_execve
+    ecall
+    j       .Lfail
+
+wait_probe_exec_errors:
+    addi    sp, sp, -288
+    li      s1, 0x1234
+    sd      s1, 0(sp)
+    li      a7, __NR_execve
+    la      a0, .Ltruncated
+    li      a1, 0
+    li      a2, 0
+    ecall
+    li      t0, -ENOEXEC
+    bne     a0, t0, .Lfail
+    la      a0, .Lmissing
+    ecall
+    li      t0, -ENOENT
+    bne     a0, t0, .Lfail
+    li      a0, 1
+    ecall
+    li      t0, -EFAULT
+    bne     a0, t0, .Lfail
+    la      s0, .Lchild_path
+    mv      a0, s0
+    li      a2, 1
+    ecall
+    li      t0, -EFAULT
+    bne     a0, t0, .Lfail
+    mv      a0, s0
+    li      a2, 0
+    addi    a1, sp, 8
+    li      t0, 1
+    sd      t0, 0(a1)          /* 无效 argv[0]。 */
+    ecall
+    li      t0, -EFAULT
+    bne     a0, t0, .Lfail
+    mv      t0, a1
+    li      t1, 33
+.Lfill_argv:
+    sd      s0, 0(t0)
+    addi    t0, t0, 8
+    addi    t1, t1, -1
+    bnez    t1, .Lfill_argv
+    sd      zero, 0(t0)
+    mv      a0, s0
+    ecall
+    li      t0, -E2BIG
+    bne     a0, t0, .Lfail
+    ld      t0, 0(sp)
+    bne     t0, s1, .Lfail
+    j       .Ldone
+
 wait_probe_fork_oom:
     li      a7, __NR_clone
     li      a0, SIGCHLD
@@ -115,6 +189,14 @@ wait_probe_fork_oom:
     wait4   s0, zero, WNOHANG
     li      t0, -ECHILD
     bne     a0, t0, .Lfail
+    la      a0, .Lchild_path
+    li      a1, 0
+    li      a2, 0
+    li      a7, __NR_execve
+    ecall
+    ld      t0, 0(sp)          /* 内存不足返回原入口之后，旧栈仍可读写。 */
+    bne     a0, t0, .Lfail
+    sd      zero, 0(sp)
     j       .Ldone
 
 wait_probe_fork:
@@ -207,4 +289,8 @@ wait_probe_child:
 wait_probe_fault:
     ebreak
     j       wait_probe_fault
+.Ltruncated: .asciz "/test/truncated"
+.Lmissing: .asciz "/no-such-file"
+.Linit_path: .asciz "/init"
+.Lchild_path: .asciz "/bin/child"
 wait_probe_end:

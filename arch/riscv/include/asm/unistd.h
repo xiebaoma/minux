@@ -5,6 +5,7 @@
 #define __NR_exit   93
 #define __NR_getpid 172
 #define __NR_clone  220
+#define __NR_execve 221
 #define __NR_wait4  260
 
 #ifdef CONFIG_SELFTEST

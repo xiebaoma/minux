@@ -17,6 +17,8 @@ extern const char wait_probe_parent_first[], wait_probe_child_first[];
 extern const char wait_probe_parent_fault[], wait_probe_parent_orphans[];
 extern const char wait_probe_child[], wait_probe_fault[], wait_probe_fork[], wait_probe_fork_oom[];
 
+extern const char wait_probe_exec[], wait_probe_exec_errors[];
+
 static struct {
 	unsigned int blocked_parents;
 	unsigned int runnable_parents;
@@ -111,7 +113,7 @@ static void test_fork_oom(void)
 		free_pages(stack, TASK_STACK_ORDER);
 		observed.parent_done = false;
 		task_idle_once();
-		check(observed.parent_done, "fork: clone returns -ENOMEM, parent writes and wait4 sees no child");
+		check(observed.parent_done, "fork/execve: failed allocations preserve the caller, its stack and its children");
 		test_release_held(held);
 	} else {
 		if (parent)
@@ -131,6 +133,10 @@ void test_user_wait(void)
 		unsigned int orphans;
 		const char *description;
 	} cases[] = {
+		{ wait_probe_exec, 0, 0, 0,
+		  "execve: replace a forked process, preserve its PID and reap the whole family" },
+		{ wait_probe_exec_errors, 0, 0, 0,
+		  "execve: invalid ELF, pathname and vectors return to the same user program" },
 		{ wait_probe_fork, 0, 0, 0,
 		  "fork: repeated user clone, store, kernel copy and wait preserve private stacks and PIDs" },
 		{ wait_probe_parent_first, 1, 0, 0,
