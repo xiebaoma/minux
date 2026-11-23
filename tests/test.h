@@ -33,5 +33,6 @@ void test_sched(void);
 void test_preempt(void);
 void test_user_preempt(void);
 void test_user_fault(void);
+void test_user_wait(void);
 
 #endif /* _TESTS_TEST_H */

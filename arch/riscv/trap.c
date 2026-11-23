@@ -6,6 +6,7 @@
 #include <minux/mm.h>
 #include <minux/panic.h>
 #include <minux/printk.h>
+#include <minux/signal.h>
 #include <minux/string.h>
 #include <minux/switch_to.h>
 #include <minux/task.h>
@@ -13,10 +14,19 @@
 #define SCAUSE_INTERRUPT (1UL << (sizeof(unsigned long) * 8 - 1))
 #define SCAUSE_TIMER     5
 #define SCAUSE_EXTERNAL  9
-#define SCAUSE_USER_ECALL 8
-#define SCAUSE_INST_PAGE_FAULT  12
-#define SCAUSE_LOAD_PAGE_FAULT  13
-#define SCAUSE_STORE_PAGE_FAULT 15
+
+#define SCAUSE_INST_MISALIGNED  0
+#define SCAUSE_INST_ACCESS      1
+#define SCAUSE_BREAKPOINT       3
+#define SCAUSE_LOAD_MISALIGNED  4
+#define SCAUSE_LOAD_ACCESS      5
+#define SCAUSE_STORE_MISALIGNED  6
+#define SCAUSE_STORE_ACCESS     7
+#define SCAUSE_USER_ECALL       8
+#define SCAUSE_INST_PAGE_FAULT   12
+#define SCAUSE_LOAD_PAGE_FAULT   13
+#define SCAUSE_STORE_PAGE_FAULT  15
+
 #define SSTATUS_UXL_64   (2UL << 32)
 
 extern void riscv_trap_entry(void);
@@ -73,7 +83,8 @@ void arch_wait_for_interrupt(void)
 static void handle_user_exception(struct pt_regs *regs)
 {
 	struct task_struct *task = task_current();
-	unsigned int access;
+	unsigned int access = 0;
+	int signal = SIGSEGV;
 
 	switch (regs->cause) {
 	case SCAUSE_USER_ECALL:
@@ -88,8 +99,20 @@ static void handle_user_exception(struct pt_regs *regs)
 	case SCAUSE_STORE_PAGE_FAULT:
 		access = VM_WRITE;
 		break;
+	case SCAUSE_INST_ACCESS:
+	case SCAUSE_LOAD_ACCESS:
+	case SCAUSE_STORE_ACCESS:
+		break;
+	case SCAUSE_INST_MISALIGNED:
+	case SCAUSE_LOAD_MISALIGNED:
+	case SCAUSE_STORE_MISALIGNED:
+		signal = SIGBUS;
+		break;
+	case SCAUSE_BREAKPOINT:
+		signal = SIGTRAP;
+		break;
 	default:
-		access = 0;
+		signal = SIGILL;
 		break;
 	}
 
@@ -98,7 +121,7 @@ static void handle_user_exception(struct pt_regs *regs)
 
 	pr_warn("user task %d: exception %lu sepc=0x%lx stval=0x%lx\n",
 		task->pid, regs->cause, regs->epc, regs->tval);
-	task_exit_current();
+	task_exit_current(signal);
 }
 
 void riscv_trap_handler(struct pt_regs *regs)

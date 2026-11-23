@@ -1,5 +1,6 @@
 #include <minux/buddy.h>
 #include <minux/bug.h>
+#include <minux/errno.h>
 #include <minux/irq.h>
 #include <minux/limits.h>
 #include <minux/mm.h>
@@ -20,10 +21,18 @@ static LIST_HEAD(run_queue);
 /* 单 hart 上，接手的任务会在再次调度前回收这个已退出的任务。 */
 static struct task_struct *dead_task;
 
+static void init_task_lists(struct task_struct *task)
+{
+	INIT_LIST_HEAD(&task->run_list);
+	INIT_LIST_HEAD(&task->children);
+	INIT_LIST_HEAD(&task->sibling);
+	init_wait_queue(&task->child_wait);
+}
+
 void task_init(void)
 {
 	boot_task.state = TASK_RUNNING;
-	INIT_LIST_HEAD(&boot_task.run_list);
+	init_task_lists(&boot_task);
 	current_task = &boot_task;
 }
 
@@ -39,11 +48,30 @@ static void *task_stack_top(const struct task_struct *task)
 	return base + (PAGE_SIZE << TASK_STACK_ORDER);
 }
 
-static void task_free(struct task_struct *task)
+static void task_release_resources(struct task_struct *task)
 {
 	mm_destroy(task->mm);
 	BUG_ON(!free_pages(task->stack_page, TASK_STACK_ORDER));
-	kfree(task);
+	task->mm = NULL;
+	task->stack_page = NULL;
+	task->context = NULL;
+}
+
+static void detach_child(struct task_struct *child)
+{
+	list_del_init(&child->sibling);
+	child->parent = NULL;
+}
+
+static void detach_children(struct task_struct *parent)
+{
+	struct task_struct *child, *next;
+
+	list_for_each_entry_safe(child, next, &parent->children, sibling) {
+		detach_child(child);
+		if (child->state == TASK_ZOMBIE)
+			kfree(child);
+	}
 }
 
 static void finish_task_switch(void)
@@ -53,13 +81,21 @@ static void finish_task_switch(void)
 	if (!task)
 		return;
 	dead_task = NULL;
-	task_free(task);
+	detach_children(task);
+	task_release_resources(task);
+	if (task->parent) {
+		task->state = TASK_ZOMBIE;
+		wake_up_all(&task->parent->child_wait);
+	} else {
+		kfree(task);
+	}
 }
 
-void task_exit_current(void)
+void task_exit_current(int status)
 {
 	arch_local_irq_save();
 	BUG_ON(current_task == &boot_task || current_task->state != TASK_RUNNING);
+	current_task->exit_status = status;
 	current_task->state = TASK_DEAD;
 	schedule();
 	BUG();
@@ -78,7 +114,7 @@ static void task_start(void)
 
 	arch_local_irq_enable();
 	task->entry(task->arg);
-	task_exit_current();
+	task_exit_current(0);
 }
 
 static struct task_struct *task_alloc(void)
@@ -93,13 +129,16 @@ static struct task_struct *task_alloc(void)
 		return NULL;
 	}
 
+	init_task_lists(task);
 	return task;
 }
 
-static void task_enqueue(struct task_struct *task)
+static void task_publish(struct task_struct *task)
 {
 	unsigned long flags = arch_local_irq_save();
 
+	if (task->parent)
+		list_add_tail(&task->sibling, &task->parent->children);
 	task->state = TASK_RUNNABLE;
 	list_add_tail(&task->run_list, &run_queue);
 	arch_local_irq_restore(flags);
@@ -117,7 +156,7 @@ struct task_struct *task_create(void (*entry)(void *), void *arg)
 	task->entry = entry;
 	task->arg = arg;
 	task->context = arch_init_thread(task_stack_top(task), task_start);
-	task_enqueue(task);
+	task_publish(task);
 	return task;
 }
 
@@ -138,14 +177,17 @@ struct task_struct *task_create_user(struct mm_struct *mm, uintptr_t user_pc,
 		task->pid = next_user_pid++;
 	arch_local_irq_restore(flags);
 	if (!task->pid) {
-		task_free(task);
+		task_release_resources(task);
+		kfree(task);
 		return NULL;
 	}
 
 	task->mm = mm;
+	if (current_task->mm)
+		task->parent = current_task;
 	task->context = arch_init_user_thread(task_stack_top(task), task_start,
 					     user_pc, user_sp);
-	task_enqueue(task);
+	task_publish(task);
 	return task;
 }
 
@@ -162,9 +204,63 @@ bool task_destroy(struct task_struct *task)
 	}
 	list_del(&task->run_list);
 	task->state = TASK_DEAD;
+	detach_children(task);
+	if (task->parent) {
+		struct task_struct *parent = task->parent;
+
+		detach_child(task);
+		wake_up_all(&parent->child_wait);
+	}
 	arch_local_irq_restore(flags);
-	task_free(task);
+	task_release_resources(task);
+	kfree(task);
 	return true;
+}
+
+struct child_wait {
+	struct task_struct *parent;		//要检查哪个父任务的子任务链表。
+	struct task_struct *zombie;		//如果找到了已退出的子任务，记录它，供 task_wait_child() 回收。
+	int pid;						//要等哪个子任务；`-1` 表示任意子任务。
+	bool nohang;					//是否不阻塞，立即返回。
+	bool matched;					//是否找到了符合 pid 的子任务。
+};
+
+static bool child_wait_ready(void *arg)
+{
+	struct child_wait *wait = arg;
+	struct task_struct *child;
+
+	wait->matched = false;
+	list_for_each_entry(child, &wait->parent->children, sibling) {
+		if (wait->pid != -1 && child->pid != wait->pid)
+			continue;
+		wait->matched = true;
+		if (child->state == TASK_ZOMBIE) {
+			wait->zombie = child;
+			return true;
+		}
+	}
+	return !wait->matched || wait->nohang;
+}
+
+//让当前任务等待并回收自己的子任务
+int task_wait_child(int pid, bool nohang, int *status)
+{
+	unsigned long flags = arch_local_irq_save();
+	struct child_wait wait = { .parent = current_task, .pid = pid, .nohang = nohang };
+	int result;
+
+	wait_event(&wait.parent->child_wait, child_wait_ready, &wait);
+	if (wait.zombie) {
+		result = wait.zombie->pid;
+		*status = wait.zombie->exit_status;
+		detach_child(wait.zombie);
+		kfree(wait.zombie);
+	} else {
+		result = wait.matched ? 0 : -ECHILD;
+	}
+	arch_local_irq_restore(flags);
+	return result;
 }
 
 void task_switch(struct task_struct *next)
