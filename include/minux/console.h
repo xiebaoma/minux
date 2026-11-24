@@ -9,6 +9,7 @@
 
 #include <minux/types.h>
 
+extern const struct stream_operations console_operations;
 void early_console_write(const char *s, size_t n);
 
 #endif /* _MINUX_CONSOLE_H */

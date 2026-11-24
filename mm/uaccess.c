@@ -57,6 +57,22 @@ size_t copy_to_user(uintptr_t to, const void *from, size_t size)
 	return copy_user((void *)to, from, size, true);
 }
 
+int copy_to_user_exact(uintptr_t to, const void *from, size_t size)
+{
+	struct mm_struct *mm = task_current()->mm;
+	uintptr_t limit = arch_user_limit();
+
+	if (!size)
+		return 0;
+	if (!mm || to >= limit || size > limit - to)
+		return -EFAULT;
+	/* 当前任务独占 mm，预先解决缺页和 COW 后，复制期间映射保持有效。 */
+	for (uintptr_t addr = to; addr < to + size; addr = (addr & ~(PAGE_SIZE - 1)) + PAGE_SIZE)
+		if (!mm_user_page(mm, addr, VM_WRITE))
+			return -EFAULT;
+	return copy_to_user(to, from, size) ? -EFAULT : 0;
+}
+
 /* 按页读取，遇到 NUL 即停止，字符串末尾之后的页可以未映射。 */
 long copy_string_from_user(char *to, uintptr_t from, size_t limit)
 {

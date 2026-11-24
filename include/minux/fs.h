@@ -7,7 +7,16 @@
 /* 包括字符串结尾；与 execve 复制用户路径时使用同一个上限。 */
 #define VFS_PATH_MAX 128
 
+struct file;
+/* 流设备和管道直接与用户缓冲区传输，不使用普通文件的位置锁。 */
+struct stream_operations {
+	ssize_t (*read)(struct file *file, uintptr_t buf, size_t count);
+	ssize_t (*write)(struct file *file, uintptr_t buf, size_t count);
+	void (*release)(struct file *file);
+};
+
 struct inode {
+	const struct stream_operations *stream;
 	struct inode *parent;
 	size_t size;
 	/* 目录提供 lookup，普通文件提供 read。节点在挂载期间保持有效。 */
@@ -21,6 +30,8 @@ struct inode {
 
 /* inode 由挂载持有；fd 表持有打开文件的引用，fork 后共享 pos。 */
 struct file {
+	const struct stream_operations *stream;
+	void *private_data;
 	struct inode *inode;
 	size_t pos;
 	unsigned int refs;

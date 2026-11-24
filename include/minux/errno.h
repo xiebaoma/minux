@@ -8,6 +8,7 @@
 #define ECHILD 10
 #define EAGAIN 11
 #define ENOMEM 12
+#define EACCES 13
 #define EFAULT 14
 #define EEXIST 17
 #define ENOTDIR 20
@@ -15,7 +16,9 @@
 #define EINVAL 22
 #define EMFILE 24
 #define EFBIG 27
+#define ESPIPE 29
 #define EROFS 30
+#define EPIPE 32
 #define ENAMETOOLONG 36
 #define ENOSYS 38
 

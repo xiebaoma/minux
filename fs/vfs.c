@@ -80,13 +80,19 @@ int vfs_open_flags(struct inode *root, const char *path, int flags, struct file 
 		err = -EISDIR;
 		goto out;
 	}
-	if ((access != O_RDONLY && !node->write) || ((flags & O_TRUNC) && !node->truncate)) {
+	if (node->stream) {
+		if ((access != O_WRONLY && !node->stream->read) ||
+		    (access != O_RDONLY && !node->stream->write)) {
+			err = -EACCES;
+			goto out;
+		}
+	} else if ((access != O_RDONLY && !node->write) || ((flags & O_TRUNC) && !node->truncate)) {
 		err = -EROFS;
 		goto out;
 	}
-	if (flags & O_TRUNC)
+	if ((flags & O_TRUNC) && node->truncate)
 		node->truncate(node);
-	*out = (struct file){ .inode = node, .access = access, .refs = 1 };
+	*out = (struct file){ .inode = node, .stream = node->stream, .access = access, .refs = 1 };
 out:
 	spin_unlock_irqrestore(&fs_lock, irq);
 	return err;
@@ -105,6 +111,8 @@ ssize_t vfs_read_at(const struct file *file, size_t offset, void *buf, size_t co
 
 	if (file->access == O_WRONLY)
 		n = -EBADF;
+	else if (file->stream)
+		n = -ESPIPE;
 	else if (count && offset < node->size) {
 		if (count > node->size - offset)
 			count = node->size - offset;
@@ -122,6 +130,8 @@ ssize_t vfs_write_at(struct file *file, size_t offset, const void *buf, size_t c
 
 	if (file->access == O_RDONLY)
 		n = -EBADF;
+	else if (file->stream)
+		n = -ESPIPE;
 	else if (count)
 		n = node->write(node, offset, buf, count);
 	spin_unlock_irqrestore(&fs_lock, irq);

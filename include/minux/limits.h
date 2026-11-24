@@ -7,6 +7,8 @@
 #ifndef _MINUX_LIMITS_H
 #define _MINUX_LIMITS_H
 
+#define PIPE_BUF 4096
+
 #define INT_MAX		2147483647
 #define INT_MIN		(-INT_MAX - 1)
 #define UINT_MAX	4294967295U

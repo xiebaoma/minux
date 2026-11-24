@@ -62,9 +62,9 @@ $(BUILD)/user/%.elf: $(BUILD)/user/%.o $(ARCH)/user.ld
 # 只打包清单中的文件；先写临时文件，避免失败后复用半个归档。
 ROOTDIR := $(BUILD)/rootfs
 ROOT_FILES := init bin/child
-ROOT_DIRS := bin tmp
+ROOT_DIRS := bin tmp dev
 ifeq ($(TEST),1)
-ROOT_FILES += test/truncated
+ROOT_FILES += test/truncated test/pipes
 ROOT_DIRS += test
 endif
 
@@ -76,12 +76,16 @@ $(ROOTDIR)/bin/child: $(BUILD)/user/child.elf
 	@mkdir -p $(dir $@)
 	cp $< $@
 
+$(ROOTDIR)/test/pipes: $(BUILD)/tests/user/pipe.o $(ARCH)/user.ld
+	@mkdir -p $(dir $@)
+	$(LD) -T $(ARCH)/user.ld --no-relax -s -o $@ $<
+
 $(ROOTDIR)/test/truncated: $(BUILD)/user/init.elf
 	@mkdir -p $(dir $@)
 	head -c 4 $< > $@
 
 $(BUILD)/initramfs.cpio: $(addprefix $(ROOTDIR)/,$(ROOT_FILES)) Makefile
-	@mkdir -p $(ROOTDIR)/tmp
+	@mkdir -p $(ROOTDIR)/tmp $(ROOTDIR)/dev
 	cd $(ROOTDIR) && printf '%s\n' $(ROOT_DIRS) $(ROOT_FILES) | cpio -o -H newc > ../initramfs.cpio.tmp
 	mv $@.tmp $@
 
@@ -110,5 +114,5 @@ dump: $(KERNEL)
 clean:
 	rm -rf $(BUILD)
 
--include $(OBJS:.o=.d) $(BUILD)/user/init.d $(BUILD)/user/child.d
+-include $(OBJS:.o=.d) $(BUILD)/user/init.d $(BUILD)/user/child.d $(BUILD)/tests/user/pipe.d
 .SECONDARY: $(BUILD)/user/init.o $(BUILD)/user/child.o

@@ -97,7 +97,7 @@ static ssize_t ramfs_write(struct inode *inode, size_t offset, const void *buf, 
 static int ramfs_create(struct inode *parent, const char *name, size_t len, struct inode **out);
 
 static struct ramfs_node *add_child(struct ramfs_node *dir, const char *name, size_t len,
-				    bool directory)
+				    bool directory, const struct stream_operations *stream)
 {
 	struct ramfs_node *node = kzalloc(sizeof(*node) + len);
 
@@ -107,6 +107,8 @@ static struct ramfs_node *add_child(struct ramfs_node *dir, const char *name, si
 	if (directory) {
 		node->inode.lookup = ramfs_lookup;
 		node->inode.create = ramfs_create;
+	} else if (stream) {
+		node->inode.stream = stream;
 	} else {
 		node->inode.read = ramfs_read;
 		node->inode.write = ramfs_write;
@@ -122,12 +124,24 @@ static struct ramfs_node *add_child(struct ramfs_node *dir, const char *name, si
 static int ramfs_create(struct inode *parent, const char *name, size_t len, struct inode **out)
 {
 	struct ramfs_node *dir = container_of(parent, struct ramfs_node, inode);
-	struct ramfs_node *node = add_child(dir, name, len, false);
+	struct ramfs_node *node = add_child(dir, name, len, false, NULL);
 
 	if (!node)
 		return -ENOMEM;
 	*out = &node->inode;
 	return 0;
+}
+
+int ramfs_add_device(struct inode *parent, const char *name, const struct stream_operations *ops)
+{
+	struct ramfs_node *dir = container_of(parent, struct ramfs_node, inode);
+	size_t len = strlen(name);
+
+	if (parent->lookup != ramfs_lookup)
+		return -ENOTDIR;
+	if (find_child(dir, name, len))
+		return -EEXIST;
+	return add_child(dir, name, len, false, ops) ? 0 : -ENOMEM;
 }
 
 int ramfs_add(struct ramfs_node *root, const char *path, bool directory,
@@ -162,7 +176,7 @@ int ramfs_add(struct ramfs_node *root, const char *path, bool directory,
 	}
 	if (node)
 		return -EEXIST;
-	node = add_child(dir, name, len, directory);
+	node = add_child(dir, name, len, directory, NULL);
 	if (!node)
 		return -ENOMEM;
 	node->archive_data = data;

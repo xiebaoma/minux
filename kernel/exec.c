@@ -3,6 +3,7 @@
 #include <minux/elf.h>
 #include <minux/errno.h>
 #include <minux/fs.h>
+#include <minux/fcntl.h>
 #include <minux/irq.h>
 #include <minux/mm.h>
 #include <minux/page.h>
@@ -117,12 +118,24 @@ int start_init_process(void)
 
 	if (err)
 		return err;
+	struct file *output;
+	err = file_open("/dev/console", O_WRONLY, &output);
+	if (err) {
+		mm_destroy(img.mm);
+		return err;
+	}
+	/* 新任务首次派发前装好 stdout。fork/exec 随后沿用普通 fd 生命周期。 */
+	unsigned long irq = arch_local_irq_save();
 	task = task_create_user(img.mm, img.pc, img.sp);
 	if (!task) {
+		arch_local_irq_restore(irq);
+		file_put(output);
 		mm_destroy(img.mm);
 		return -ENOMEM;
 	}
+	task->files.slots[1] = output;
 	pr_info("user task %d: start /init\n", task->pid);
+	arch_local_irq_restore(irq);
 	return 0;
 }
 

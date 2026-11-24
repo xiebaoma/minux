@@ -4,6 +4,7 @@
 /* Linux RV64 系统调用编号。 */
 #define __NR_openat 56
 #define __NR_close  57
+#define __NR_pipe2  59
 #define __NR_read   63
 #define __NR_write  64
 #define __NR_exit   93

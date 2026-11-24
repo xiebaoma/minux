@@ -12,4 +12,7 @@ long copy_string_from_user(char *to, uintptr_t from, size_t limit);
 size_t copy_from_user(void *to, uintptr_t from, size_t size);
 size_t copy_to_user(uintptr_t to, const void *from, size_t size);
 
+/* 小型系统调用结果：先准备所有目标页，失败时用户缓冲区保持原样。 */
+int copy_to_user_exact(uintptr_t to, const void *from, size_t size);
+
 #endif /* _MINUX_UACCESS_H */

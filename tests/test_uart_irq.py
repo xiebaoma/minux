@@ -59,7 +59,8 @@ def main():
         if not child or child[1] == init[1]:
             raise RuntimeError("/init did not exec a separate child")
         child_done = wait_for(b"user task " + child[1] + b": exit 42\r\n", child.end())
-        init_done = wait_for(b"user task " + init[1] + b": exit 0\r\n", child_done)
+        console_done = wait_for(b"minux: hello through pipe\r\n", child_done)
+        init_done = wait_for(b"user task " + init[1] + b": exit 0\r\n", console_done)
         ready = max(ready, init_done)
         proc.stdin.write(FIRST)
         proc.stdin.flush()
@@ -95,6 +96,7 @@ def main():
 
     print("/tmp ramfs I/O, independent opens and shared fd across fork/exec passed")
     print("/init clone/COW/execve/exit/wait4 integration test passed")
+    print("anonymous pipe, EOF and stdout via /dev/console passed")
     print("UART/PLIC integration test passed")
 
 

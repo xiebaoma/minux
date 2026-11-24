@@ -24,6 +24,10 @@
     bne t0, t1, .Lfail
     .endm
 
+    .section .rodata
+pipe_message: .ascii "minux: hello through pipe\n"
+    .equ PIPE_MESSAGE_LEN, . - pipe_message
+
     .text
     .globl _start
 _start:
@@ -34,7 +38,7 @@ _start:
     lbu t0, 0(t0)
     li t1, '/'
     bne t0, t1, .Lfail
-    addi sp, sp, -16
+    addi sp, sp, -64
     open_demo O_CREAT|O_WRONLY|O_TRUNC
     bltz a0, .Lfail
     mv s1, a0
@@ -62,6 +66,11 @@ _start:
     ecall
     bnez a0, .Lfail
 
+    addi a0, sp, 8               /* int pipefd[2] */
+    li a1, 0
+    li a7, __NR_pipe2
+    ecall
+    bnez a0, .Lfail
     li a0, SIGCHLD
     li a1, 0
     li a7, __NR_clone
@@ -69,6 +78,11 @@ _start:
     bltz a0, .Lfail
     beqz a0, .Lchild
     mv s0, a0
+    lw a0, 12(sp)
+    li a7, __NR_close
+    ecall
+    bnez a0, .Lfail
+    mv a0, s0
     mv a1, sp
     li a2, 0
     li a3, 0
@@ -78,6 +92,29 @@ _start:
     lw t0, 0(sp)
     li t1, (42 << 8)
     bne t0, t1, .Lfail
+    /* 子进程退出时关闭最后一个写端；先取出管道中剩余的数据。 */
+    lw a0, 8(sp)
+    addi a1, sp, 16
+    li a2, 48
+    li a7, __NR_read
+    ecall
+    li t0, PIPE_MESSAGE_LEN
+    bne a0, t0, .Lfail
+    mv a2, a0
+    li a0, 1
+    li a7, __NR_write
+    ecall
+    li t0, PIPE_MESSAGE_LEN
+    bne a0, t0, .Lfail
+    lw a0, 8(sp)
+    li a2, 1
+    li a7, __NR_read
+    ecall
+    bnez a0, .Lfail
+    lw a0, 8(sp)
+    li a7, __NR_close
+    ecall
+    bnez a0, .Lfail
     la t0, child_argv
     ld t0, 8(t0)                /* 子进程填写 argv[1] 后，父进程仍应读到 NULL。 */
     bnez t0, .Lfail
@@ -90,6 +127,17 @@ _start:
     j .Lexit
 
 .Lchild:
+    lw a0, 8(sp)
+    li a7, __NR_close
+    ecall
+    bnez a0, .Lfail
+    lw a0, 12(sp)
+    la a1, pipe_message
+    li a2, PIPE_MESSAGE_LEN
+    li a7, __NR_write
+    ecall
+    li t0, PIPE_MESSAGE_LEN
+    bne a0, t0, .Lfail
     la a0, child_path
     la a1, child_argv
     la t0, argument

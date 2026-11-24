@@ -9,10 +9,13 @@
 #include <minux/uaccess.h>
 
 /* 每张表只由所属任务修改。不同进程的槽位可引用同一个打开文件。 */
-static void file_put(struct file *file)
+void file_put(struct file *file)
 {
-	if (__atomic_sub_fetch(&file->refs, 1, __ATOMIC_ACQ_REL) == 0)
+	if (__atomic_sub_fetch(&file->refs, 1, __ATOMIC_ACQ_REL) == 0) {
+		if (file->stream && file->stream->release)
+			file->stream->release(file);
 		kfree(file);
+	}
 }
 
 void fdtable_inherit(struct fdtable *child, const struct fdtable *parent)
@@ -54,11 +57,25 @@ long sys_close(int fd)
 	return 0;
 }
 
+int file_open(const char *path, int flags, struct file **out)
+{
+	struct file *file = kmalloc(sizeof(*file));
+	int err;
+
+	if (!file)
+		return -ENOMEM;
+	err = vfs_open_flags(root_inode, path, flags, file);
+	if (err)
+		kfree(file);
+	else
+		*out = file;
+	return err;
+}
+
 long sys_openat(int dirfd, uintptr_t pathname, int flags, unsigned int mode)
 {
 	struct fdtable *table = &task_current()->files;
 	char path[VFS_PATH_MAX];
-	struct file *file;
 	int fd;
 	long err = copy_string_from_user(path, pathname, sizeof(path));
 
@@ -68,7 +85,7 @@ long sys_openat(int dirfd, uintptr_t pathname, int flags, unsigned int mode)
 	if (!path[0])
 		return -ENOENT;
 	if (path[0] != '/') {
-		/* 此阶段 cwd 固定为根目录，fd 只可打开普通文件。 */
+		/* 此阶段 cwd 固定为根目录，fd 表中没有目录句柄。 */
 		if (dirfd != AT_FDCWD)
 			return fd_get_file(dirfd) ? -ENOTDIR : -EBADF;
 		if ((size_t)err == sizeof(path))
@@ -81,16 +98,8 @@ long sys_openat(int dirfd, uintptr_t pathname, int flags, unsigned int mode)
 		;
 	if (fd == FD_MAX)
 		return -EMFILE;
-	file = kmalloc(sizeof(*file));
-	if (!file)
-		return -ENOMEM;
-	err = vfs_open_flags(root_inode, path, flags, file);
-	if (err) {
-		kfree(file);
-		return err;
-	}
-	table->slots[fd] = file;
-	return fd;
+	err = file_open(path, flags, &table->slots[fd]);
+	return err ? err : fd;
 }
 
 static ssize_t read_to_user(struct file *file, uintptr_t addr, void *buf, size_t count)
@@ -125,6 +134,13 @@ static long file_io(int fd, uintptr_t addr, size_t count, bool write)
 		return -EBADF;
 	if (count > LONG_MAX)
 		return -EINVAL;
+	if (!count)
+		return 0;
+	if (file->stream) {
+		if (write)
+			return file->stream->write(file, addr, count);
+		return file->stream->read(file, addr, count);
+	}
 	/* fork 后一次系统调用的所有分块共同推进同一个偏移。 */
 	irq = spin_lock_irqsave(&file->pos_lock);
 	while (done < count) {

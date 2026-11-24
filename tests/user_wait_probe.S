@@ -128,10 +128,89 @@ wait_probe_exec:
     li      a7, __NR_openat
     ecall
     bnez    a0, .Lfail
+    li      a0, AT_FDCWD
+    la      a1, .Lconsole
+    li      a2, O_WRONLY
+    li      a7, __NR_openat
+    ecall
+    li      t0, 1
+    bne     a0, t0, .Lfail
     la      a0, .Linit_path
     sd      a0, 0(sp)
     sd      zero, 8(sp)
     mv      a1, sp
+    li      a2, 0
+    li      a7, __NR_execve
+    ecall
+    j       .Lfail
+
+    .globl wait_probe_pipes
+wait_probe_pipes:
+    /* 第二个 int 落在未映射页，失败时第一个 int 和 fd 表都应保持原样。 */
+    addi    sp, sp, -16
+    li      t0, 123
+    sw      t0, 12(sp)
+    addi    a0, sp, 12
+    li      a1, 0
+    li      a7, __NR_pipe2
+    ecall
+    li      t0, -EFAULT
+    bne     a0, t0, .Lfail
+    lw      t0, 12(sp)
+    li      t1, 123
+    bne     t0, t1, .Lfail
+    /* 用户缓冲区的最后四字节可访问。短写和短读都只提交已复制的数据。 */
+    mv      a0, sp
+    li      a1, 0
+    li      a7, __NR_pipe2
+    ecall
+    bnez    a0, .Lfail
+    lw      a0, 4(sp)
+    addi    a1, sp, 12
+    li      a2, 8
+    li      a7, __NR_write
+    ecall
+    li      t0, 4
+    bne     a0, t0, .Lfail
+    lw      a0, 4(sp)
+    li      a2, 4
+    ecall
+    bne     a0, t0, .Lfail
+    sw      zero, 12(sp)
+    lw      a0, 0(sp)
+    li      a2, 8
+    li      a7, __NR_read
+    ecall
+    bne     a0, t0, .Lfail
+    lw      a0, 0(sp)
+    li      a2, 4
+    ecall
+    bne     a0, t0, .Lfail
+    lw      t1, 12(sp)
+    li      t0, 123
+    bne     t1, t0, .Lfail
+    lw      a0, 0(sp)
+    li      a7, __NR_close
+    ecall
+    bnez    a0, .Lfail
+    lw      a0, 4(sp)
+    ecall
+    bnez    a0, .Lfail
+    li      a0, SIGCHLD
+    li      a1, 0
+    li      a7, __NR_clone
+    ecall
+    bltz    a0, .Lfail
+    beqz    a0, .Lexec_pipes
+    mv      s0, a0
+    wait4   s0, sp
+    bne     a0, s0, .Lfail
+    lw      t0, 0(sp)
+    bnez    t0, .Lfail
+    j       .Ldone
+.Lexec_pipes:
+    la      a0, .Lpipes
+    li      a1, 0
     li      a2, 0
     li      a7, __NR_execve
     ecall
@@ -426,6 +505,8 @@ wait_probe_fault:
 .Labsolute_file: .asciz "/tmp/fd-probe"
 .Ltruncated: .asciz "/test/truncated"
 .Lmissing: .asciz "/no-such-file"
+.Lpipes: .asciz "/test/pipes"
+.Lconsole: .asciz "/dev/console"
 .Linit_path: .asciz "/init"
 .Lchild_path: .asciz "/bin/child"
 wait_probe_end:

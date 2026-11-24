@@ -2,7 +2,7 @@
 
 Minux 是一个面向 RISC-V 64 的类 Unix 宏内核。它以 Linux 的内核架构为参照，在保持代码精简、可读的前提下，提供与 Linux 兼容的系统调用接口。
 
-> **v0.7 开发中，已完成可写 ramfs 和进程文件描述符。** 在 QEMU `virt` 上，`/init` 在 `/tmp/fd-demo` 写入 `abc`，关闭后独立打开两次，两次都读到 `a`。随后它派生子进程并执行 `/bin/child`，子进程用继承的 fd 读到 `b`，父进程在 `wait4` 返回后读到 `c`。
+> **v0.7 开发中，已完成可写 ramfs、设备输出和匿名管道。** 在 QEMU `virt` 上，`/init` 在 `/tmp/fd-demo` 写入 `abc`，关闭后独立打开两次，两次都读到 `a`。随后它派生子进程并执行 `/bin/child`，子进程用继承的 fd 读到 `b`，父进程在 `wait4` 返回后读到 `c`。
 
 ## 设计目标
 
@@ -38,12 +38,13 @@ brew install qemu riscv64-elf-gcc python
 | `make dump` | 生成反汇编文件 `build/minux.asm` |
 | `make clean` | 清理构建产物 |
 
-普通 `make run` 的串口日志包含以下四行，时钟日志可能穿插其间。子进程返回 42，父进程核对退出状态和 COW 隔离后返回 0，内核继续输出时钟计数。
+普通 `make run` 的串口日志包含以下五行，时钟日志可能穿插其间。子进程返回 42，父进程核对退出状态和 COW 隔离后返回 0，内核继续输出时钟计数。
 
 ```text
 user task 1: start /init
 user task 2: exec /bin/child
 user task 2: exit 42
+minux: hello through pipe
 user task 1: exit 0
 ```
 
@@ -51,7 +52,11 @@ user task 1: exit 0
 
 每进程有 16 个 fd 槽，`openat` 分配最低可用编号。支持普通文件的 `O_RDONLY`、`O_WRONLY`、`O_RDWR`、`O_CREAT`、`O_EXCL` 和可写打开时的 `O_TRUNC`。绝对路径忽略 `dirfd`，相对路径仅支持 `AT_FDCWD`，当前工作目录固定为 `/`。创建时接受 `mode` 参数，权限检查留待后续版本。
 
-`read` 和 `write` 按实际传输量推进偏移。独立打开各有自己的位置，fork 继承的 fd 共享位置，exec 保留 fd，close 和进程退出释放引用。归档文件首次写入时复制到可写内存，重启后恢复归档内容。
+普通文件的 `read` 和 `write` 按实际传输量推进偏移。独立打开各有自己的位置，fork 继承的 fd 共享位置，exec 保留 fd，close 和进程退出释放引用。归档文件首次写入时复制到可写内存，重启后恢复归档内容。
+
+根文件系统挂载时注册只写设备 `/dev/console`，内核为初始 `/init` 打开它作为标准输出（fd 1）。上例中的 `minux: hello through pipe` 是子进程写入匿名管道、父进程从管道读回后通过 `write(1, …)` 输出的内容。
+
+`pipe2(fds, 0)` 返回读端和写端。每条管道有 4096 字节的环形缓冲区，读空、写满时通过等待队列睡眠。最多 4096 字节的单次写入会等待足够空间。最后一个写端关闭后，读端先读完剩余数据，再返回 0；最后一个读端关闭后，写入返回 `-EPIPE`。当前仅支持阻塞模式。
 
 ## 目录结构
 
@@ -62,7 +67,7 @@ arch/riscv/            架构相关代码
   sbi.c                SBI 调用封装
   include/asm/         架构相关头文件
 include/minux/         内核通用头文件（types.h、string.h ...）
-fs/                    VFS 路径查找、fd 表、可写 ramfs 和 newc 归档解析
+fs/                    VFS 路径查找、fd 表、可写 ramfs、newc 归档解析、控制台设备和管道
 init/                  通用初始化（start_kernel）
 kernel/                核心子系统（printk、panic、任务与调度）
 lib/                   通用库函数（string、vsprintf）

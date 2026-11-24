@@ -18,7 +18,7 @@ extern const char wait_probe_parent_first[], wait_probe_child_first[];
 extern const char wait_probe_parent_fault[], wait_probe_parent_orphans[];
 extern const char wait_probe_child[], wait_probe_fault[], wait_probe_fork[], wait_probe_fork_oom[];
 
-extern const char wait_probe_exec[], wait_probe_exec_errors[], wait_probe_files[];
+extern const char wait_probe_exec[], wait_probe_exec_errors[], wait_probe_files[], wait_probe_pipes[];
 
 static struct {
 	unsigned int blocked_parents;
@@ -136,6 +136,8 @@ void test_user_wait(void)
 	} cases[] = {
 		{ wait_probe_exec, 0, 0, 0,
 		  "execve: replace a forked process, preserve its PID and reap the whole family" },
+		{ wait_probe_pipes, 0, 0, 0,
+		  "pipe: rollback, blocking I/O, wrap-around, wakeup on peer close and EOF" },
 		{ wait_probe_files, 0, 0, 0,
 		  "fd: access modes, user faults, short I/O, EMFILE, slot reuse and exit cleanup" },
 		{ wait_probe_exec_errors, 0, 0, 0,
