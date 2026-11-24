@@ -2,6 +2,7 @@
 #include <minux/irq.h>
 #include <minux/mm.h>
 #include <minux/page.h>
+#include <minux/ramfs.h>
 #include <minux/selftest.h>
 #include <minux/string.h>
 #include <minux/task.h>
@@ -17,7 +18,7 @@ extern const char wait_probe_parent_first[], wait_probe_child_first[];
 extern const char wait_probe_parent_fault[], wait_probe_parent_orphans[];
 extern const char wait_probe_child[], wait_probe_fault[], wait_probe_fork[], wait_probe_fork_oom[];
 
-extern const char wait_probe_exec[], wait_probe_exec_errors[];
+extern const char wait_probe_exec[], wait_probe_exec_errors[], wait_probe_files[];
 
 static struct {
 	unsigned int blocked_parents;
@@ -135,6 +136,8 @@ void test_user_wait(void)
 	} cases[] = {
 		{ wait_probe_exec, 0, 0, 0,
 		  "execve: replace a forked process, preserve its PID and reap the whole family" },
+		{ wait_probe_files, 0, 0, 0,
+		  "fd: access modes, user faults, short I/O, EMFILE, slot reuse and exit cleanup" },
 		{ wait_probe_exec_errors, 0, 0, 0,
 		  "execve: invalid ELF, pathname and vectors return to the same user program" },
 		{ wait_probe_fork, 0, 0, 0,
@@ -154,7 +157,15 @@ void test_user_wait(void)
 
 	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
 		struct task_struct *parent;
+		struct inode *saved_root = root_inode;
 
+		/* 写文件的探针使用独立挂载，卸载后仍可精确核对页数。 */
+		if (cases[i].entry == wait_probe_exec || cases[i].entry == wait_probe_files) {
+			int err = rootfs_init();
+			check(!err, "mount private ramfs for the user file probe");
+			if (err)
+				continue;
+		}
 		memset(&observed, 0, sizeof(observed));
 		parent = create_wait_probe(cases[i].entry);
 		check(parent != NULL, "wait4: create the user parent probe");
@@ -172,6 +183,10 @@ void test_user_wait(void)
 		      observed.runnable_parents == cases[i].runnable_parents &&
 		      observed.orphans == cases[i].orphans,
 		      cases[i].description);
+		if (root_inode != saved_root) {
+			ramfs_destroy(root_inode);
+			root_inode = saved_root;
+		}
 		check(task_current() == boot && buddy_free_pages() == free_before,
 		      "wait4: all process records, address spaces and stacks are reclaimed");
 	}

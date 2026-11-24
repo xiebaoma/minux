@@ -1,5 +1,7 @@
 #include <asm/unistd.h>
 #include <minux/errno.h>
+#include <minux/fcntl.h>
+#include <minux/fdtable.h>
 #include <minux/signal.h>
 #include <minux/syscall.h>
 #include "user_wait_probe.h"
@@ -118,6 +120,14 @@ wait_probe_exec:
     bnez    t0, .Lfail
     j       .Ldone
 .Lexec_init:
+    /* 先占用第一个 fd，验证 /init 使用实际返回的描述符。 */
+    li      a0, AT_FDCWD
+    la      a1, .Lchild_path
+    li      a2, O_RDONLY
+    li      a3, 0
+    li      a7, __NR_openat
+    ecall
+    bnez    a0, .Lfail
     la      a0, .Linit_path
     sd      a0, 0(sp)
     sd      zero, 8(sp)
@@ -175,6 +185,129 @@ wait_probe_exec_errors:
     ld      t0, 0(sp)
     bne     t0, s1, .Lfail
     j       .Ldone
+
+    .macro fd_open path, flags, dirfd=AT_FDCWD
+    li      a0, \dirfd
+    la      a1, \path
+    li      a2, (\flags)
+    li      a3, 0600
+    li      a7, __NR_openat
+    ecall
+    .endm
+
+    .macro expect_result result
+    li      t0, \result
+    bne     a0, t0, .Lfail
+    .endm
+
+    .globl wait_probe_files
+wait_probe_files:
+    /* 栈顶之后无映射。跨页复制只提交前两个字节。 */
+    addi    s1, sp, -2
+    addi    sp, sp, -1024
+    li      t0, 0x4241
+    sh      t0, 0(s1)
+    fd_open .Lrelative_file, O_CREAT|O_EXCL|O_WRONLY
+    expect_result 0
+    fd_open .Lrelative_file, O_RDONLY, 0
+    expect_result -ENOTDIR
+    fd_open .Lrelative_file, O_RDONLY, 17
+    expect_result -EBADF
+    li      a0, 0
+    mv      a1, s1
+    li      a2, 4
+    li      a7, __NR_read
+    ecall
+    expect_result -EBADF
+    li      a0, 0
+    li      a7, __NR_write
+    ecall
+    expect_result 2
+    li      a0, 0
+    li      a1, 0
+    ecall
+    expect_result -EFAULT
+    li      a0, 0
+    mv      a1, sp
+    li      a2, 700
+    ecall                       /* 一次写入跨多个内核中转缓冲。 */
+    expect_result 700
+    li      a0, 0
+    li      a7, __NR_close
+    ecall
+    expect_result 0
+    li      a0, 0
+    ecall
+    expect_result -EBADF
+
+    li      a0, AT_FDCWD
+    li      a1, 1
+    li      a2, O_RDONLY
+    li      a7, __NR_openat
+    ecall
+    expect_result -EFAULT
+    fd_open .Labsolute_file, O_RDONLY, 99
+    expect_result 0
+    li      a0, 0
+    li      a1, 0
+    li      a2, 0
+    li      a7, __NR_read
+    ecall
+    expect_result 0
+    li      a0, 0
+    li      a2, 4
+    ecall
+    expect_result -EFAULT
+    li      a0, 0
+    mv      a1, s1
+    sh      zero, 0(s1)
+    ecall
+    expect_result 2
+    lhu     t0, 0(s1)
+    li      t1, 0x4241
+    bne     t0, t1, .Lfail
+    li      a0, 0
+    mv      a1, sp
+    li      a2, 710
+    ecall
+    expect_result 700
+    li      a0, 0
+    ecall
+    expect_result 0
+    li      a0, 0
+    li      a7, __NR_write
+    ecall
+    expect_result -EBADF
+
+    /* 表满的 openat 不能创建新文件，也不能截断旧文件。 */
+    li      s2, 1
+.Lfill_fds:
+    fd_open .Labsolute_file, O_RDONLY
+    bne     a0, s2, .Lfail
+    addi    s2, s2, 1
+    li      t0, FD_MAX
+    blt     s2, t0, .Lfill_fds
+    fd_open .Labsolute_file, O_WRONLY|O_TRUNC
+    expect_result -EMFILE
+    fd_open .Lmissing, O_WRONLY|O_CREAT
+    expect_result -EMFILE
+    li      a0, 1
+    li      a7, __NR_close
+    ecall
+    expect_result 0
+    fd_open .Lmissing, O_RDONLY
+    expect_result -ENOENT
+    fd_open .Labsolute_file, O_RDONLY
+    expect_result 1
+    mv      a1, sp
+    li      a2, 2
+    li      a7, __NR_read
+    ecall
+    expect_result 2
+    lhu     t0, 0(sp)
+    li      t1, 0x4241
+    bne     t0, t1, .Lfail
+    j       .Ldone              /* 让 exit 释放所有打开文件。 */
 
 wait_probe_fork_oom:
     li      a7, __NR_clone
@@ -289,6 +422,8 @@ wait_probe_child:
 wait_probe_fault:
     ebreak
     j       wait_probe_fault
+.Lrelative_file: .asciz "tmp/fd-probe"
+.Labsolute_file: .asciz "/tmp/fd-probe"
 .Ltruncated: .asciz "/test/truncated"
 .Lmissing: .asciz "/no-such-file"
 .Linit_path: .asciz "/init"

@@ -2,6 +2,7 @@
 #define _MINUX_TASK_H
 
 #include <minux/compiler.h>
+#include <minux/fdtable.h>
 #include <minux/list.h>
 #include <minux/types.h>
 #include <minux/wait.h>
@@ -34,6 +35,7 @@ struct task_struct {
 	struct list_head children;				//当前任务的子任务链表表头。
 	struct list_head sibling;				//当前任务挂在父任务 children 链表中的节点。因此，一个父任务可以有多个子任务。
 	struct wait_queue child_wait;			//父任务等待子任务退出时使用的等待队列；子任务退出后会唤醒它。
+	struct fdtable files;					//文件描述符列表
 	int exit_status;						//保存子任务的退出状态，供父任务通过 wait4 读取。
 };
 

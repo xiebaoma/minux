@@ -62,7 +62,7 @@ $(BUILD)/user/%.elf: $(BUILD)/user/%.o $(ARCH)/user.ld
 # 只打包清单中的文件；先写临时文件，避免失败后复用半个归档。
 ROOTDIR := $(BUILD)/rootfs
 ROOT_FILES := init bin/child
-ROOT_DIRS := bin
+ROOT_DIRS := bin tmp
 ifeq ($(TEST),1)
 ROOT_FILES += test/truncated
 ROOT_DIRS += test
@@ -81,6 +81,7 @@ $(ROOTDIR)/test/truncated: $(BUILD)/user/init.elf
 	head -c 4 $< > $@
 
 $(BUILD)/initramfs.cpio: $(addprefix $(ROOTDIR)/,$(ROOT_FILES)) Makefile
+	@mkdir -p $(ROOTDIR)/tmp
 	cd $(ROOTDIR) && printf '%s\n' $(ROOT_DIRS) $(ROOT_FILES) | cpio -o -H newc > ../initramfs.cpio.tmp
 	mv $@.tmp $@
 

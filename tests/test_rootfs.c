@@ -1,5 +1,7 @@
 #include <minux/buddy.h>
 #include <minux/errno.h>
+#include <minux/fcntl.h>
+#include <minux/page.h>
 #include <minux/limits.h>
 #include <minux/ramfs.h>
 #include <minux/sprintf.h>
@@ -8,7 +10,7 @@
 
 void test_rootfs(void)
 {
-	const struct inode *node;
+	struct inode *node;
 	struct file file;
 	char path[VFS_PATH_MAX + 1], buf[8];
 
@@ -63,7 +65,7 @@ static size_t member(u8 *dst, const char *name, unsigned int mode, const char *d
 static void expect_rejected(const u8 *data, size_t size, int expected, const char *why)
 {
 	u64 before = buddy_free_pages();
-	const struct inode *root = NULL;
+	struct inode *root = NULL;
 	int err = ramfs_mount(data, size, &root);
 
 	check(err == expected && !root && buddy_free_pages() == before, why);
@@ -71,10 +73,56 @@ static void expect_rejected(const u8 *data, size_t size, int expected, const cha
 		ramfs_destroy(root);
 }
 
+static void test_writable_tree(struct inode *root)
+{
+	struct file writer, reader, other;
+	char buf[8];
+	int err = vfs_open_flags(root, "/d/f", O_RDWR, &writer);
+
+	check(!err, "ramfs: open an archive-backed file for writing");
+	if (err)
+		return;
+	err = vfs_open(root, "/d/f", &reader);
+	check(!err, "ramfs: open an independent reader");
+	if (err)
+		return;
+	check(vfs_write_at(&writer, 1, "X", 1) == 1 &&
+	      vfs_read_at(&reader, 0, buf, sizeof(buf)) == 3 && !memcmp(buf, "aXc", 3),
+	      "ramfs: preserve archive data around an overwrite and publish it to other opens");
+	check(vfs_open_flags(root, "/d/f", O_CREAT | O_EXCL, &other) == -EEXIST &&
+	      vfs_open_flags(root, "/d/f", O_RDONLY | O_TRUNC, &other) == -EINVAL &&
+	      vfs_open_flags(root, "/absent/f", O_CREAT, &other) == -ENOENT &&
+	      vfs_open_flags(root, "/d/new/", O_CREAT, &other) == -ENOENT &&
+	      vfs_open_flags(root, "/d/new", 0x40000000 | O_CREAT, &other) == -EINVAL &&
+	      vfs_open(root, "/d/new", &other) == -ENOENT,
+	      "open: invalid flags and paths leave the tree unchanged");
+	struct test_held_page *held = test_hold_all_but(0);
+	ssize_t n = vfs_write_at(&writer, PAGE_SIZE, "!", 1);
+	test_release_held(held);
+	check(n == -ENOMEM && reader.inode->size == 3 &&
+	      vfs_read_at(&reader, 0, buf, 3) == 3 && !memcmp(buf, "aXc", 3),
+	      "ramfs: failed growth preserves previous length and contents");
+	check(!vfs_open_flags(root, "/d/f", O_WRONLY | O_TRUNC, &other) &&
+	      !vfs_read_at(&reader, 0, buf, 1) && vfs_write_at(&writer, 3, "z", 1) == 1 &&
+	      vfs_read_at(&reader, 0, buf, 4) == 4 && !memcmp(buf, "\0\0\0z", 4),
+	      "ramfs: truncation is visible to existing opens and later writes zero the gap");
+
+	char name[] = "/d/new";
+	err = vfs_open_flags(root, name, O_RDWR | O_CREAT | O_EXCL, &other);
+	check(!err, "open: exclusively create a regular file");
+	if (!err) {
+		name[3] = 'X';
+		check(!vfs_open(root, "/d/new", &reader) && !reader.inode->size &&
+		      vfs_write_at(&other, 0, "n", 1) == 1 &&
+		      vfs_read_at(&reader, 0, buf, 1) == 1 && buf[0] == 'n',
+		      "ramfs: created inode owns its name and remains visible across opens");
+	}
+}
+
 void test_initramfs(void)
 {
 	u8 archive[512];
-	const struct inode *root;
+	struct inode *root;
 	struct file file;
 	char buf[3];
 	u64 before = buddy_free_pages();
@@ -87,6 +135,8 @@ void test_initramfs(void)
 	if (!err) {
 		check(!vfs_open(root, "/d/f", &file) && vfs_read_at(&file, 0, buf, 3) == 3 &&
 		      !memcmp(buf, "abc", 3), "newc: read nested member data");
+		test_writable_tree(root);
+		check(!memcmp(archive + members - 4, "abc", 3), "ramfs: archive bytes stay immutable");
 		ramfs_destroy(root);
 	}
 	check(buddy_free_pages() == before, "ramfs: release the whole tree");

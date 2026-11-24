@@ -50,6 +50,7 @@ static void *task_stack_top(const struct task_struct *task)
 
 static void task_release_resources(struct task_struct *task)
 {
+	fdtable_release(&task->files);
 	mm_destroy(task->mm);
 	BUG_ON(!free_pages(task->stack_page, TASK_STACK_ORDER));
 	task->mm = NULL;
@@ -210,6 +211,7 @@ int task_fork(const struct pt_regs *regs)
 		goto out;
 	}
 	child->context = arch_init_fork_thread(task_stack_top(child), task_start, regs);
+	fdtable_inherit(&child->files, &current_task->files);
 	child->parent = current_task;
 	pid = next_user_pid++;
 	child->pid = pid;

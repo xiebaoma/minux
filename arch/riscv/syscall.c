@@ -8,6 +8,14 @@ static long dispatch_syscall(struct pt_regs *regs)
 {
 	/* Linux RV64 从 a7 取 32 位调用号。参数依次位于 a0 至 a5。 */
 	switch ((int)regs->x[17]) {
+	case __NR_openat:
+		return sys_openat(regs->x[10], regs->x[11], regs->x[12], regs->x[13]);
+	case __NR_read:
+		return sys_read(regs->x[10], regs->x[11], regs->x[12]);
+	case __NR_write:
+		return sys_write(regs->x[10], regs->x[11], regs->x[12]);
+	case __NR_close:
+		return sys_close(regs->x[10]);
 	case __NR_exit:
 		sys_exit((int)regs->x[10]);
 	case __NR_getpid:

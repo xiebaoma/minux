@@ -93,6 +93,7 @@ def main():
                 proc.kill()
                 proc.wait()
 
+    print("/tmp ramfs I/O, independent opens and shared fd across fork/exec passed")
     print("/init clone/COW/execve/exit/wait4 integration test passed")
     print("UART/PLIC integration test passed")
 

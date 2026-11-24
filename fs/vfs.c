@@ -1,9 +1,13 @@
 #include <minux/errno.h>
+#include <minux/fcntl.h>
 #include <minux/fs.h>
 
-int vfs_lookup(const struct inode *root, const char *path, const struct inode **out)
+/* ramfs 操作都在内存中完成。串行化查找和创建，以及数据缓冲的替换。 */
+static struct spinlock fs_lock = SPINLOCK_INIT;
+
+static int walk(struct inode *root, const char *path, int flags, struct inode **out)
 {
-	const struct inode *node = root;
+	struct inode *node = root;
 	const char *p = path;
 
 	if (!*p)
@@ -23,10 +27,8 @@ int vfs_lookup(const struct inode *root, const char *path, const struct inode **
 		while (*p == '/')
 			p++;
 		name = p;
-		while (*p && *p != '/') {
-			if (++p - path >= VFS_PATH_MAX)
-				return -ENAMETOOLONG;
-		}
+		while (*p && *p != '/')
+			p++;
 		len = p - name;
 		if (!len || (len == 1 && *name == '.'))
 			continue;
@@ -35,34 +37,93 @@ int vfs_lookup(const struct inode *root, const char *path, const struct inode **
 				node = node->parent;
 			continue;
 		}
-		err = node->lookup(node, name, len, &node);
+		struct inode *dir = node;
+		err = dir->lookup(dir, name, len, &node);
+		if (err == -ENOENT && !*p && (flags & O_CREAT)) {
+			if (!dir->create)
+				return -EROFS;
+			return dir->create(dir, name, len, out);
+		}
 		if (err)
 			return err;
 	}
+	if ((flags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL))
+		return -EEXIST;
 	*out = node;
 	return 0;
 }
 
-int vfs_open(const struct inode *root, const char *path, struct file *out)
+int vfs_lookup(struct inode *root, const char *path, struct inode **out)
 {
-	const struct inode *node;
-	int err = vfs_lookup(root, path, &node);
+	unsigned long irq = spin_lock_irqsave(&fs_lock);
+	int err = walk(root, path, 0, out);
 
+	spin_unlock_irqrestore(&fs_lock, irq);
+	return err;
+}
+
+int vfs_open_flags(struct inode *root, const char *path, int flags, struct file *out)
+{
+	struct inode *node;
+	int access = flags & O_ACCMODE;
+	unsigned long irq;
+	int err;
+
+	if ((flags & ~(O_ACCMODE | O_CREAT | O_EXCL | O_TRUNC)) || access == O_ACCMODE ||
+	    ((flags & O_TRUNC) && access == O_RDONLY))
+		return -EINVAL;
+	irq = spin_lock_irqsave(&fs_lock);
+	err = walk(root, path, flags, &node);
 	if (err)
-		return err;
-	if (node->lookup)
-		return -EISDIR;
-	out->inode = node;
-	return 0;
+		goto out;
+	if (node->lookup) {
+		err = -EISDIR;
+		goto out;
+	}
+	if ((access != O_RDONLY && !node->write) || ((flags & O_TRUNC) && !node->truncate)) {
+		err = -EROFS;
+		goto out;
+	}
+	if (flags & O_TRUNC)
+		node->truncate(node);
+	*out = (struct file){ .inode = node, .access = access, .refs = 1 };
+out:
+	spin_unlock_irqrestore(&fs_lock, irq);
+	return err;
+}
+
+int vfs_open(struct inode *root, const char *path, struct file *out)
+{
+	return vfs_open_flags(root, path, O_RDONLY, out);
 }
 
 ssize_t vfs_read_at(const struct file *file, size_t offset, void *buf, size_t count)
 {
 	const struct inode *node = file->inode;
+	unsigned long irq = spin_lock_irqsave(&fs_lock);
+	ssize_t n = 0;
 
-	if (!count || offset >= node->size)
-		return 0;
-	if (count > node->size - offset)
-		count = node->size - offset;
-	return node->read(node, offset, buf, count);
+	if (file->access == O_WRONLY)
+		n = -EBADF;
+	else if (count && offset < node->size) {
+		if (count > node->size - offset)
+			count = node->size - offset;
+		n = node->read(node, offset, buf, count);
+	}
+	spin_unlock_irqrestore(&fs_lock, irq);
+	return n;
+}
+
+ssize_t vfs_write_at(struct file *file, size_t offset, const void *buf, size_t count)
+{
+	struct inode *node = file->inode;
+	unsigned long irq = spin_lock_irqsave(&fs_lock);
+	ssize_t n = 0;
+
+	if (file->access == O_RDONLY)
+		n = -EBADF;
+	else if (count)
+		n = node->write(node, offset, buf, count);
+	spin_unlock_irqrestore(&fs_lock, irq);
+	return n;
 }

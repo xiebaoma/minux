@@ -1,7 +1,7 @@
 #include <minux/ramfs.h>
 
 extern const u8 initramfs_start[], initramfs_end[];
-const struct inode *root_inode;
+struct inode *root_inode;
 
 int rootfs_init(void)
 {

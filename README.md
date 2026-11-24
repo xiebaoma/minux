@@ -2,7 +2,7 @@
 
 Minux 是一个面向 RISC-V 64 的类 Unix 宏内核。它以 Linux 的内核架构为参照，在保持代码精简、可读的前提下，提供与 Linux 兼容的系统调用接口。
 
-> **v0.7 开发中，已完成只读根文件系统。** 内核在 QEMU `virt` 单 hart 上挂载内嵌的 initramfs，通过 VFS 加载用户程序 `/init`。`/init` 通过 `clone` 派生子进程，子进程触发写时复制（COW）并执行归档中的 `/bin/child`。父进程通过 `wait4` 核对退出状态。
+> **v0.7 开发中，已完成可写 ramfs 和进程文件描述符。** 在 QEMU `virt` 上，`/init` 在 `/tmp/fd-demo` 写入 `abc`，关闭后独立打开两次，两次都读到 `a`。随后它派生子进程并执行 `/bin/child`，子进程用继承的 fd 读到 `b`，父进程在 `wait4` 返回后读到 `c`。
 
 ## 设计目标
 
@@ -47,6 +47,12 @@ user task 2: exit 42
 user task 1: exit 0
 ```
 
+## 文件系统接口
+
+每进程有 16 个 fd 槽，`openat` 分配最低可用编号。支持普通文件的 `O_RDONLY`、`O_WRONLY`、`O_RDWR`、`O_CREAT`、`O_EXCL` 和可写打开时的 `O_TRUNC`。绝对路径忽略 `dirfd`，相对路径仅支持 `AT_FDCWD`，当前工作目录固定为 `/`。创建时接受 `mode` 参数，权限检查留待后续版本。
+
+`read` 和 `write` 按实际传输量推进偏移。独立打开各有自己的位置，fork 继承的 fd 共享位置，exec 保留 fd，close 和进程退出释放引用。归档文件首次写入时复制到可写内存，重启后恢复归档内容。
+
 ## 目录结构
 
 ```
@@ -56,7 +62,7 @@ arch/riscv/            架构相关代码
   sbi.c                SBI 调用封装
   include/asm/         架构相关头文件
 include/minux/         内核通用头文件（types.h、string.h ...）
-fs/                    VFS 路径查找、只读 ramfs 和 newc 归档解析
+fs/                    VFS 路径查找、fd 表、可写 ramfs 和 newc 归档解析
 init/                  通用初始化（start_kernel）
 kernel/                核心子系统（printk、panic、任务与调度）
 lib/                   通用库函数（string、vsprintf）
