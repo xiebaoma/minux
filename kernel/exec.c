@@ -2,6 +2,7 @@
 #include <minux/buddy.h>
 #include <minux/elf.h>
 #include <minux/errno.h>
+#include <minux/fs.h>
 #include <minux/irq.h>
 #include <minux/mm.h>
 #include <minux/page.h>
@@ -13,19 +14,6 @@
 #include <minux/syscall.h>
 #include <minux/task.h>
 #include <minux/uaccess.h>
-
-extern const u8 init_elf[], init_elf_end[], child_elf[], child_elf_end[];
-
-static const struct builtin_file {
-	const char *path;
-	const u8 *start, *end;
-} files[] = {
-	{ "/init", init_elf, init_elf_end },
-	{ "/bin/child", child_elf, child_elf_end },
-#ifdef CONFIG_SELFTEST
-	{ "/test/truncated", init_elf, init_elf + 4 },
-#endif
-};
 
 #define EXEC_MAX_STRINGS 32
 struct exec_args {
@@ -106,21 +94,18 @@ static int build_stack(struct exec_image *img, const char *const argv[], const c
 static int prepare_image(const char *path, const char *const argv[], const char *const envp[],
 			 struct exec_image *img)
 {
-	for (size_t i = 0; i < sizeof(files) / sizeof(files[0]); i++) {
-		const struct builtin_file *f = &files[i];
-		int err;
+	struct file file;
+	int err = vfs_open(root_inode, path, &file);
 
-		if (strcmp(path, f->path))
-			continue;
-		err = elf_load(f->start, (uintptr_t)f->end - (uintptr_t)f->start, &img->mm, &img->pc);
-		if (err)
-			return err;
-		err = build_stack(img, argv, envp);
-		if (err)
-			mm_destroy(img->mm);
+	if (err)
 		return err;
-	}
-	return -ENOENT;
+	err = elf_load(&file, &img->mm, &img->pc);
+	if (err)
+		return err;
+	err = build_stack(img, argv, envp);
+	if (err)
+		mm_destroy(img->mm);
+	return err;
 }
 
 int start_init_process(void)
@@ -150,7 +135,7 @@ long sys_execve(uintptr_t filename, uintptr_t argv, uintptr_t envp, struct pt_re
 	unsigned long flags;
 
 	//从旧地址空间取出文件名
-	char path[128];
+	char path[VFS_PATH_MAX];
 	long err = copy_string_from_user(path, filename, sizeof(path));
 
 	if (err < 0)

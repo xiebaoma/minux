@@ -4,6 +4,7 @@
 #include <minux/types.h>
 
 struct mm_struct;
+struct file;
 
 /*
 ELF 文件
@@ -27,7 +28,7 @@ struct elf64_phdr {
 };
 
 /* 成功时发布独立地址空间和入口，失败时由加载器释放临时资源。 */
-int elf_load(const void *data, size_t size, struct mm_struct **mm, uintptr_t *entry);
+int elf_load(const struct file *file, struct mm_struct **mm, uintptr_t *entry);
 int start_init_process(void);
 
 #endif

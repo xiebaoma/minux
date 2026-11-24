@@ -1,6 +1,8 @@
 #include <minux/buddy.h>
 #include <minux/elf.h>
 #include <minux/errno.h>
+#include <minux/container_of.h>
+#include <minux/fs.h>
 #include <minux/mm.h>
 #include <minux/page.h>
 #include <minux/paging.h>
@@ -34,12 +36,46 @@ static const struct fixture valid = {
 	.text = { 1, 2, 3, 4 }, .data = { 5, 6, 7, 8 },
 };
 
+/* 模拟每次最多返回 7 字节的后端，验证 ELF 的所有读取都经过 VFS。 */
+struct fixture_inode {
+	struct inode inode;
+	const void *bytes;
+	size_t stop_at;
+	int stop_result;
+};
+
+static ssize_t fixture_read(const struct inode *inode, size_t offset, void *buf, size_t count)
+{
+	const struct fixture_inode *src = container_of(inode, struct fixture_inode, inode);
+
+	if (offset >= src->stop_at)
+		return src->stop_result;
+	if (count > src->stop_at - offset)
+		count = src->stop_at - offset;
+	if (count > 7)
+		count = 7;
+	memcpy(buf, (const u8 *)src->bytes + offset, count);
+	return count;
+}
+
+static int load_fixture(const struct fixture *src, size_t size, size_t stop_at, int stop_result,
+			struct mm_struct **mm, uintptr_t *pc)
+{
+	struct fixture_inode node = {
+		.inode = { .size = size, .read = fixture_read },
+		.bytes = src, .stop_at = stop_at, .stop_result = stop_result,
+	};
+	struct file file = { .inode = &node.inode };
+
+	return elf_load(&file, mm, pc);
+}
+
 static void expect_invalid(const struct fixture *file, size_t size, const char *why)
 {
 	u64 before = buddy_free_pages();
 	struct mm_struct *mm = NULL;
 	uintptr_t pc = 0;
-	int err = elf_load(file, size, &mm, &pc);
+	int err = load_fixture(file, size, size, 0, &mm, &pc);
 
 	check(err == -ENOEXEC && !mm && !pc && buddy_free_pages() == before, why);
 	mm_destroy(mm);
@@ -54,7 +90,7 @@ void test_elf(void)
 	unsigned int access;
 	u64 baseline = buddy_free_pages();
 
-	check(!elf_load(&valid, sizeof(valid), &mm, &pc) && mm && pc == TEXT_VA,
+	check(!load_fixture(&valid, sizeof(valid), sizeof(valid), 0, &mm, &pc) && mm && pc == TEXT_VA,
 	      "elf: accept a static executable with non-page-aligned segment starts");
 	if (mm) {
 		page = arch_pgd_user_page(mm->pgd, pc, &access);
@@ -73,6 +109,15 @@ void test_elf(void)
 		mm_destroy(mm);
 	}
 	check(buddy_free_pages() == baseline, "elf: unload all segment and page-table pages");
+
+	mm = NULL;
+	pc = 0;
+	check(load_fixture(&valid, sizeof(valid), DATA_OFF + 1, 0, &mm, &pc) == -ENOEXEC &&
+	      !mm && !pc && buddy_free_pages() == baseline,
+	      "elf: premature EOF in a segment rolls back the new image");
+	check(load_fixture(&valid, sizeof(valid), DATA_OFF, -EFAULT, &mm, &pc) == -EFAULT &&
+	      !mm && !pc && buddy_free_pages() == baseline,
+	      "elf: propagate a backend read error and reclaim the partial image");
 
 	expect_invalid(&file, sizeof(file.eh) - 1, "elf: truncated header");
 	file.eh.phoff = ~(u64)0;

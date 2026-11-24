@@ -6,6 +6,7 @@
 #include <asm/virt.h>
 #include <minux/buddy.h>
 #include <minux/fdt.h>
+#include <minux/fs.h>
 #include <minux/elf.h>
 #include <minux/irq.h>
 #include <minux/limits.h>
@@ -263,6 +264,7 @@ static void start_kernel_mapped(void)
 {
 	u64 ram_pages = memblock_memory_pages(&boot_memblock);
 	u64 nr_free_pages;
+	int err;
 
 	if (!buddy_init(&boot_memblock))
 		panic("cannot initialize buddy allocator");
@@ -275,6 +277,10 @@ static void start_kernel_mapped(void)
 
 	/* 只在 `make test` 构建时有效，普通构建下是空函数 */
 	run_selftests();
+	err = rootfs_init();
+	if (err)
+		panic("cannot mount initramfs: %d", err);
+	run_rootfs_selftests();
 
 	/* 打开总中断前配置 PLIC 和 UART。 */
 	pr_info("PLIC: base=0x%lx, S context=%u; UART: base=0x%lx, IRQ=%u\n",
@@ -288,7 +294,7 @@ static void start_kernel_mapped(void)
 	run_runtime_selftests();
 	/* 首次派发同时建立 idle，确保 /init 能立刻阻塞等待子进程。 */
 	unsigned long flags = arch_local_irq_save();
-	int err = start_init_process();
+	err = start_init_process();
 
 	if (err)
 		panic("cannot start /init: %d", err);

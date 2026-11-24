@@ -22,9 +22,9 @@ static const struct test_suite suites[] = {
 	{ "sv39",   test_sv39 },
 	{ "mm",     test_mm },
 	{ "elf",    test_elf },
+	{ "initramfs", test_initramfs },
 	{ "task",   test_task },
 	{ "sched",  test_sched },
-	{ "user wait", test_user_wait },
 };
 
 static int failures;
@@ -86,6 +86,12 @@ void run_selftests(void)
 	test_puts("==== selftest ====\n");
 	for (size_t i = 0; i < sizeof(suites) / sizeof(suites[0]); i++)
 		run_suite(suites[i].name, suites[i].run);
+}
+
+void run_rootfs_selftests(void)
+{
+	run_suite("rootfs", test_rootfs);
+	run_suite("user wait", test_user_wait);
 }
 
 void run_runtime_selftests(void)

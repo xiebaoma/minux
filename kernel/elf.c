@@ -2,6 +2,7 @@
 #include <minux/buddy.h>
 #include <minux/elf.h>
 #include <minux/errno.h>
+#include <minux/fs.h>
 #include <minux/mm.h>
 #include <minux/page.h>
 #include <minux/paging.h>
@@ -19,9 +20,26 @@
 _Static_assert(sizeof(struct elf64_ehdr) == 64, "ELF64 header layout");
 _Static_assert(sizeof(struct elf64_phdr) == 56, "ELF64 program header layout");
 
-static int load_segment(struct mm_struct *mm, const u8 *file, size_t size,
+static int read_exact(const struct file *file, size_t offset, void *buf, size_t count)
+{
+	while (count) {
+		ssize_t n = vfs_read_at(file, offset, buf, count);
+
+		if (n < 0)
+			return n;
+		if (!n)
+			return -ENOEXEC;
+		offset += n;
+		buf = (u8 *)buf + n;
+		count -= n;
+	}
+	return 0;
+}
+
+static int load_segment(struct mm_struct *mm, const struct file *file,
 			const struct elf64_phdr *ph, uintptr_t limit, uintptr_t *previous_end)
 {
+	size_t size = file->inode->size;
 	uintptr_t start = ph->vaddr & ~(PAGE_SIZE - 1);
 	uintptr_t end;
 	unsigned int access = 0;
@@ -52,31 +70,35 @@ static int load_segment(struct mm_struct *mm, const u8 *file, size_t size,
 		size_t offset = va % PAGE_SIZE;
 		size_t count = PAGE_SIZE - offset;
 		struct page *page = mm_populate_page(mm, va - offset);
+		int err;
 
 		if (!page)
 			return -ENOMEM;
 		if (count > ph->filesz - copied)
 			count = ph->filesz - copied;
-		memcpy((u8 *)page_address(page) + offset, file + ph->offset + copied, count);
+		err = read_exact(file, ph->offset + copied,
+				 (u8 *)page_address(page) + offset, count);
+		if (err)
+			return err;
 		copied += count;
 	}
 	return 0;
 }
 
-int elf_load(const void *data, size_t size, struct mm_struct **result, uintptr_t *entry)
+int elf_load(const struct file *file, struct mm_struct **result, uintptr_t *entry)
 {
 	static const u8 ident[] = { 0x7f, 'E', 'L', 'F', 2, 1, 1 };
 	const uintptr_t stack_start = arch_user_limit() - STACK_PAGES * PAGE_SIZE;
-	const u8 *file = data;
+	size_t size = file->inode->size;
 	struct elf64_ehdr eh;
 	struct mm_struct *mm;
 	uintptr_t previous_end = PAGE_SIZE;
 	bool executable_entry = false;
 	int err;
 
-	if (size < sizeof(eh))
-		return -ENOEXEC;
-	memcpy(&eh, file, sizeof(eh));
+	err = read_exact(file, 0, &eh, sizeof(eh));
+	if (err)
+		return err;
 	if (memcmp(eh.ident, ident, sizeof(ident)) || eh.type != 2 || eh.version != 1 ||
 	    !arch_elf_supported(eh.machine, eh.flags, eh.entry) || eh.ehsize != sizeof(eh) ||
 	    eh.phentsize != sizeof(struct elf64_phdr) || !eh.phnum || eh.phoff < sizeof(eh) ||
@@ -88,12 +110,14 @@ int elf_load(const void *data, size_t size, struct mm_struct **result, uintptr_t
 	for (unsigned int i = 0; i < eh.phnum; i++) {
 		struct elf64_phdr ph;
 
-		memcpy(&ph, file + eh.phoff + i * sizeof(ph), sizeof(ph));
+		err = read_exact(file, eh.phoff + i * sizeof(ph), &ph, sizeof(ph));
+		if (err)
+			goto fail;
 		if (ph.type == PT_INTERP || ph.type == PT_DYNAMIC || ph.type == PT_TLS)
 			goto invalid;
 		if (ph.type != PT_LOAD)
 			continue;
-		err = load_segment(mm, file, size, &ph, stack_start - PAGE_SIZE, &previous_end);
+		err = load_segment(mm, file, &ph, stack_start - PAGE_SIZE, &previous_end);
 		if (err)
 			goto fail;
 		if ((ph.flags & PF_X) && eh.entry >= ph.vaddr && eh.entry - ph.vaddr < ph.memsz)

@@ -2,7 +2,7 @@
 
 Minux 是一个面向 RISC-V 64 的类 Unix 宏内核。它以 Linux 的内核架构为参照，在保持代码精简、可读的前提下，提供与 Linux 兼容的系统调用接口。
 
-> **当前版本 `v0.6`**。Minux 在 QEMU `virt` 单 hart 上启动用户态 `/init`。它通过 `clone` 派生子进程，子进程触发写时复制（COW），再用 `execve` 运行内嵌的第二个静态 ELF。父进程通过 `wait4` 回收子进程并核对结果。
+> **v0.7 开发中，已完成只读根文件系统。** 内核在 QEMU `virt` 单 hart 上挂载内嵌的 initramfs，通过 VFS 加载用户程序 `/init`。`/init` 通过 `clone` 派生子进程，子进程触发写时复制（COW）并执行归档中的 `/bin/child`。父进程通过 `wait4` 核对退出状态。
 
 ## 设计目标
 
@@ -17,6 +17,7 @@ Minux 是一个面向 RISC-V 64 的类 Unix 宏内核。它以 Linux 的内核�
 |---|---|
 | RISC-V 交叉编译工具链（GCC + binutils） | GCC 16.2.0 / binutils 2.47 |
 | QEMU（`qemu-system-riscv64`） | 11.1.3 |
+| cpio | 支持 `-o -H newc`（macOS 系统自带） |
 | GNU Make | 3.81 及以上 |
 | Python 3（`make test` 使用标准库） | 3.9 及以上 |
 
@@ -55,11 +56,12 @@ arch/riscv/            架构相关代码
   sbi.c                SBI 调用封装
   include/asm/         架构相关头文件
 include/minux/         内核通用头文件（types.h、string.h ...）
+fs/                    VFS 路径查找、只读 ramfs 和 newc 归档解析
 init/                  通用初始化（start_kernel）
 kernel/                核心子系统（printk、panic、任务与调度）
 lib/                   通用库函数（string、vsprintf）
 mm/                    启动内存表、buddy、slab、虚拟地址空间管理
-user/                  内嵌的用户程序 /init 和 /bin/child
+user/                  打包进启动归档的用户程序 /init 和 /bin/child
 tests/                 内核自测和 QEMU 串口集成测试
 docs/                  内存管理、调度、FDT、异常与中断设计文档及路线图
 ```

@@ -30,7 +30,7 @@ LDFLAGS := -T $(ARCH)/kernel.ld -nostdlib --no-relax
 
 # 自动收集这些目录下的源文件：新建 .c 文件后无需改 Makefile。
 # 链接顺序无所谓：_start 位于 .text.entry 段，链接脚本保证它排在最前。
-SRC_DIRS := $(ARCH) init lib kernel mm
+SRC_DIRS := $(ARCH) init lib kernel mm fs
 ifeq ($(TEST),1)
 SRC_DIRS += tests
 CFLAGS   += -DCONFIG_SELFTEST
@@ -59,8 +59,33 @@ $(KERNEL): $(OBJS) $(ARCH)/kernel.ld
 $(BUILD)/user/%.elf: $(BUILD)/user/%.o $(ARCH)/user.ld
 	$(LD) -T $(ARCH)/user.ld --no-relax -s -o $@ $<
 
-$(BUILD)/init/images.o: $(BUILD)/user/init.elf $(BUILD)/user/child.elf
-$(BUILD)/init/images.o: CPPFLAGS += -DINIT_ELF='"$(BUILD)/user/init.elf"' -DCHILD_ELF='"$(BUILD)/user/child.elf"'
+# 只打包清单中的文件；先写临时文件，避免失败后复用半个归档。
+ROOTDIR := $(BUILD)/rootfs
+ROOT_FILES := init bin/child
+ROOT_DIRS := bin
+ifeq ($(TEST),1)
+ROOT_FILES += test/truncated
+ROOT_DIRS += test
+endif
+
+$(ROOTDIR)/init: $(BUILD)/user/init.elf
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(ROOTDIR)/bin/child: $(BUILD)/user/child.elf
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(ROOTDIR)/test/truncated: $(BUILD)/user/init.elf
+	@mkdir -p $(dir $@)
+	head -c 4 $< > $@
+
+$(BUILD)/initramfs.cpio: $(addprefix $(ROOTDIR)/,$(ROOT_FILES)) Makefile
+	cd $(ROOTDIR) && printf '%s\n' $(ROOT_DIRS) $(ROOT_FILES) | cpio -o -H newc > ../initramfs.cpio.tmp
+	mv $@.tmp $@
+
+$(BUILD)/init/images.o: $(BUILD)/initramfs.cpio
+$(BUILD)/init/images.o: CPPFLAGS += -DINITRAMFS='"$(BUILD)/initramfs.cpio"'
 
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)

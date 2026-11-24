@@ -11,11 +11,13 @@
 #include <minux/types.h>
 
 void run_selftests(void);
+void run_rootfs_selftests(void);
 void run_runtime_selftests(void);
 long selftest_user_copy(uintptr_t to, uintptr_t from, size_t size);
 long selftest_user_wait(unsigned long action);
 #else
 static inline void run_selftests(void) { }
+static inline void run_rootfs_selftests(void) { }
 static inline void run_runtime_selftests(void) { }
 #endif
 
