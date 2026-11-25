@@ -45,6 +45,14 @@ def main():
             if not read_chunk():
                 raise RuntimeError(f"QEMU exited before {marker!r}")
 
+    def wait_for_child_exec(path, start, parent_pid):
+        marker = b": exec " + path + b"\r\n"
+        end = wait_for(marker, start)
+        match = re.search(rb"user task (\d+)" + re.escape(marker), output[start:end])
+        if not match or match[1] == parent_pid:
+            raise RuntimeError(f"/init did not exec {path!r} in a child")
+        return match[1], end
+
     try:
         # stdin is a pipe, so any echoed bytes must come from the guest UART.
         # Wait for complete log lines so the echo cannot interrupt their output.
@@ -54,12 +62,12 @@ def main():
         init = re.search(rb"user task (\d+): start /init\r\n", output)
         if not init:
             raise RuntimeError("missing /init launch")
-        child_marker = b": exec /disk/bin/child\r\n"
-        wait_for(child_marker, init.end())
-        child = re.compile(rb"user task (\d+): exec /disk/bin/child\r\n").search(output, init.end())
-        if not child or child[1] == init[1]:
-            raise RuntimeError("/init did not exec a separate child")
-        child_done = wait_for(b"user task " + child[1] + b": exit " + expected + b"\r\n", child.end())
+        hello_pid, hello_start = wait_for_child_exec(b"/bin/hello", init.end(), init[1])
+        greeting = wait_for(b"hello from Minux libc\r\n", hello_start)
+        hello_exit = wait_for(b"user task " + hello_pid + b": exit 37\r\n", greeting)
+        hello_done = wait_for(b"init: reaped /bin/hello, status 37\r\n", hello_exit)
+        disk_pid, disk_start = wait_for_child_exec(b"/disk/bin/child", hello_done, init[1])
+        child_done = wait_for(b"user task " + disk_pid + b": exit " + expected + b"\r\n", disk_start)
         reaped = wait_for(b"init: reaped disk child, status " + expected + b"\r\n", child_done)
         console_done = wait_for(b"minux: hello through pipe\r\n", reaped)
         init_done = wait_for(b"user task " + init[1] + b": exit 0\r\n", console_done)
@@ -96,6 +104,7 @@ def main():
                 proc.kill()
                 proc.wait()
 
+    print("Minux libc startup, argv/envp, write and main returning 37 passed")
     print("/tmp ramfs I/O, independent opens and shared fd across fork/exec passed")
     print(f"/init reaped /disk/bin/child with expected exit code {expected.decode()}")
     print("anonymous pipe, EOF and stdout via /dev/console passed")

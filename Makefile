@@ -3,6 +3,7 @@
 CROSS_COMPILE ?= riscv64-elf-
 CC      := $(CROSS_COMPILE)gcc
 LD      := $(CROSS_COMPILE)ld
+AR      := $(CROSS_COMPILE)ar
 OBJDUMP := $(CROSS_COMPILE)objdump
 
 ARCH    := arch/riscv
@@ -20,11 +21,11 @@ KERNEL  := $(BUILD)/minux.elf
 # 内核不使用浮点（rv64imac + lp64），与 Linux 一致
 # 固定 C 标准为 gnu11（与 Linux 相同）。GCC 15+ 默认 C23，
 # 那里 bool/true/false 是关键字，会与 types.h 的定义冲突。
-CFLAGS  := -std=gnu11 -Wall -Wextra -O2 -g \
-           -march=rv64imac_zicsr_zifencei -mabi=lp64 -mcmodel=medany \
+FREESTANDING_CFLAGS := -std=gnu11 -Wall -Wextra -O2 -g -mabi=lp64 -mcmodel=medany \
            -ffreestanding -fno-builtin -nostdlib \
-           -fno-stack-protector -fno-pie -fno-omit-frame-pointer \
-           -Iinclude -I$(ARCH)/include -MMD -MP
+           -fno-stack-protector -fno-pie -fno-omit-frame-pointer -MMD -MP
+CFLAGS := $(FREESTANDING_CFLAGS) -march=rv64imac_zicsr_zifencei -Iinclude -I$(ARCH)/include
+USER_CFLAGS := $(FREESTANDING_CFLAGS) -march=rv64imac -nostdinc -Iuser/libc/include
 # 分页前按物理地址执行高地址链接的代码，保留 PC 相对寻址。
 LDFLAGS := -T $(ARCH)/kernel.ld -nostdlib --no-relax
 
@@ -86,7 +87,7 @@ $(BUILD)/user/%.elf: $(BUILD)/user/%.o $(ARCH)/user.ld
 
 # 只打包清单中的文件；先写临时文件，避免失败后复用半个归档。
 ROOTDIR := $(BUILD)/rootfs
-ROOT_FILES := init
+ROOT_FILES := init bin/hello
 ROOT_DIRS := bin tmp dev disk
 ifeq ($(TEST),1)
 ROOT_FILES += test/truncated test/pipes
@@ -96,6 +97,21 @@ endif
 $(ROOTDIR)/init: $(BUILD)/user/init.elf
 	@mkdir -p $(dir $@)
 	cp $< $@
+
+USER_LIBDIR := $(BUILD)/user/libc
+USER_CRT := $(USER_LIBDIR)/$(ARCH)/crt0.o
+USER_SYSCALLS := $(USER_LIBDIR)/$(ARCH)/syscalls.o
+HELLO_OBJ := $(BUILD)/user/hello.o
+
+$(HELLO_OBJ) $(USER_CRT) $(USER_SYSCALLS): CFLAGS := $(USER_CFLAGS)
+$(USER_SYSCALLS): CPPFLAGS += -I$(ARCH)/include
+
+$(USER_LIBDIR)/libc.a: $(USER_SYSCALLS)
+	$(AR) rcs $@ $^
+
+$(ROOTDIR)/bin/hello: $(USER_CRT) $(HELLO_OBJ) $(USER_LIBDIR)/libc.a $(ARCH)/user.ld
+	@mkdir -p $(dir $@)
+	$(LD) -T $(ARCH)/user.ld --no-relax -s -o $@ $(filter %.o %.a,$^)
 
 $(ROOTDIR)/test/pipes: $(BUILD)/tests/user/pipe.o $(ARCH)/user.ld
 	@mkdir -p $(dir $@)
@@ -136,4 +152,5 @@ clean:
 	rm -rf $(BUILD)
 
 -include $(OBJS:.o=.d) $(BUILD)/user/init.d $(BUILD)/user/child.d $(BUILD)/user/child-alt.d $(BUILD)/tests/user/pipe.d
+-include $(HELLO_OBJ:.o=.d) $(USER_CRT:.o=.d) $(USER_SYSCALLS:.o=.d)
 .SECONDARY: $(BUILD)/user/init.o $(BUILD)/user/child.o

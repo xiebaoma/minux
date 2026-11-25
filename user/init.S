@@ -25,6 +25,12 @@
     .endm
 
     .section .rodata
+hello_path: .asciz "/bin/hello"
+hello_arg:  .asciz "hello from Minux libc\n"
+    .balign 8
+hello_argv: .dword hello_path, hello_arg, 0
+hello_reaped: .ascii "init: reaped /bin/hello, status 37\n"
+    .equ HELLO_REAPED_LEN, . - hello_reaped
 pipe_message: .ascii "minux: hello through pipe\n"
     .equ PIPE_MESSAGE_LEN, . - pipe_message
 
@@ -44,6 +50,30 @@ _start:
     li t1, '/'
     bne t0, t1, .Lfail
     addi sp, sp, -64
+    li a0, SIGCHLD
+    li a1, 0
+    li a7, __NR_clone
+    ecall
+    bltz a0, .Lfail
+    beqz a0, .Lexec_hello
+    mv s0, a0
+    mv a1, sp
+    li a2, 0
+    li a3, 0
+    li a7, __NR_wait4
+    ecall
+    bne a0, s0, .Lfail
+    lw t0, 0(sp)
+    li t1, (37 << 8)
+    bne t0, t1, .Lfail
+    li a0, 1
+    la a1, hello_reaped
+    li a2, HELLO_REAPED_LEN
+    li a7, __NR_write
+    ecall
+    li t0, HELLO_REAPED_LEN
+    bne a0, t0, .Lfail
+
     open_demo O_CREAT|O_WRONLY|O_TRUNC
     bltz a0, .Lfail
     mv s1, a0
@@ -150,6 +180,14 @@ _start:
     bnez a0, .Lfail
     li a0, 0
     j .Lexit
+
+.Lexec_hello:
+    la a0, hello_path
+    la a1, hello_argv
+    la a2, child_envp
+    li a7, __NR_execve
+    ecall
+    j .Lfail
 
 .Lchild:
     lw a0, 8(sp)
