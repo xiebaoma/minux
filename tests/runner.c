@@ -93,6 +93,7 @@ void run_rootfs_selftests(void)
 {
 	run_suite("block (virtio-mmio)", test_virtio_block);
 	run_suite("rootfs", test_rootfs);
+	run_suite("ext2", test_ext2);
 	run_suite("user wait", test_user_wait);
 }
 

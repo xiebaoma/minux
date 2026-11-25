@@ -15,13 +15,14 @@ TIMEOUT = 20
 
 
 def main():
-    if len(sys.argv) < 2:
-        raise SystemExit("usage: test_uart_irq.py QEMU [QEMU arguments...]")
+    if len(sys.argv) < 3:
+        raise SystemExit("usage: test_uart_irq.py EXPECTED_STATUS QEMU [QEMU arguments...]")
 
+    expected = str(int(sys.argv[1])).encode()
     output = bytearray()
     deadline = time.monotonic() + TIMEOUT
     proc = subprocess.Popen(
-        sys.argv[1:], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        sys.argv[2:], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
 
@@ -53,13 +54,14 @@ def main():
         init = re.search(rb"user task (\d+): start /init\r\n", output)
         if not init:
             raise RuntimeError("missing /init launch")
-        child_marker = b": exec /bin/child\r\n"
+        child_marker = b": exec /disk/bin/child\r\n"
         wait_for(child_marker, init.end())
-        child = re.compile(rb"user task (\d+): exec /bin/child\r\n").search(output, init.end())
+        child = re.compile(rb"user task (\d+): exec /disk/bin/child\r\n").search(output, init.end())
         if not child or child[1] == init[1]:
             raise RuntimeError("/init did not exec a separate child")
-        child_done = wait_for(b"user task " + child[1] + b": exit 42\r\n", child.end())
-        console_done = wait_for(b"minux: hello through pipe\r\n", child_done)
+        child_done = wait_for(b"user task " + child[1] + b": exit " + expected + b"\r\n", child.end())
+        reaped = wait_for(b"init: reaped disk child, status " + expected + b"\r\n", child_done)
+        console_done = wait_for(b"minux: hello through pipe\r\n", reaped)
         init_done = wait_for(b"user task " + init[1] + b": exit 0\r\n", console_done)
         ready = max(ready, init_done)
         proc.stdin.write(FIRST)
@@ -95,7 +97,7 @@ def main():
                 proc.wait()
 
     print("/tmp ramfs I/O, independent opens and shared fd across fork/exec passed")
-    print("/init clone/COW/execve/exit/wait4 integration test passed")
+    print(f"/init reaped /disk/bin/child with expected exit code {expected.decode()}")
     print("anonymous pipe, EOF and stdout via /dev/console passed")
     print("UART/PLIC integration test passed")
 

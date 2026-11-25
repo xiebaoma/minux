@@ -73,7 +73,10 @@ _start:
     ecall
 
     .data
-exit_code: .word 42
+#ifndef CHILD_EXIT_CODE
+#define CHILD_EXIT_CODE 42
+#endif
+exit_code: .word CHILD_EXIT_CODE
     .bss
     .balign 4
 scratch: .skip 4100

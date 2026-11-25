@@ -7,6 +7,8 @@
 int ramfs_mount(const void *archive, size_t size, struct inode **out);
 /* 在尚未发布的 ramfs 目录中注册设备节点。 */
 int ramfs_add_device(struct inode *dir, const char *name, const struct stream_operations *ops);
+/* 在发布前挂载。成功后 ramfs 接管子文件系统，销毁时调用 unmount。 */
+int ramfs_attach(struct inode *mountpoint, struct inode *root, void (*unmount)(struct inode *));
 /* 调用者须先结束对这棵树的所有访问。 */
 void ramfs_destroy(const struct inode *root);
 

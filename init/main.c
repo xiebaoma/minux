@@ -283,7 +283,7 @@ static void start_kernel_mapped(void)
 		pr_err("virtio-blk: probe failed: %d\n", err);
 	err = rootfs_init();
 	if (err)
-		panic("cannot mount initramfs: %d", err);
+		panic("cannot initialize root filesystem: %d", err);
 	run_rootfs_selftests();
 
 	/* 打开总中断前配置 PLIC 和 UART。 */

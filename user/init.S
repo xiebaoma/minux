@@ -28,6 +28,11 @@
 pipe_message: .ascii "minux: hello through pipe\n"
     .equ PIPE_MESSAGE_LEN, . - pipe_message
 
+    .data
+status_message: .ascii "init: reaped disk child, status "
+status_digits:  .ascii "00\n"
+    .equ STATUS_LEN, . - status_message
+
     .text
     .globl _start
 _start:
@@ -90,8 +95,28 @@ _start:
     ecall
     bne a0, s0, .Lfail
     lw t0, 0(sp)
+    /* 两种验收盘各有一个已知退出码，保留完整 wait 状态比较。 */
     li t1, (42 << 8)
+    beq t0, t1, .Lreport
+    li t1, (73 << 8)
     bne t0, t1, .Lfail
+.Lreport:
+    srli t0, t0, 8
+    li t1, 10
+    divu t2, t0, t1
+    remu t0, t0, t1
+    addi t2, t2, '0'
+    addi t0, t0, '0'
+    la t1, status_digits
+    sb t2, 0(t1)
+    sb t0, 1(t1)
+    li a0, 1
+    la a1, status_message
+    li a2, STATUS_LEN
+    li a7, __NR_write
+    ecall
+    li t0, STATUS_LEN
+    bne a0, t0, .Lfail
     /* 子进程退出时关闭最后一个写端；先取出管道中剩余的数据。 */
     lw a0, 8(sp)
     addi a1, sp, 16
@@ -165,7 +190,7 @@ _start:
     .section .rodata
 demo_path:  .asciz "/tmp/fd-demo"
 message:    .ascii "abc"
-child_path: .asciz "/bin/child"
+child_path: .asciz "/disk/bin/child"
 argument:   .asciz "42"
 environment: .asciz "MINUX=1"
 

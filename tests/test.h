@@ -37,6 +37,7 @@ void test_elf(void);
 void test_memory_block(void);
 void test_virtio_block(void);
 void test_rootfs(void);
+void test_ext2(void);
 void test_initramfs(void);
 void test_task(void);
 void test_sched(void);

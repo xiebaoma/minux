@@ -46,7 +46,7 @@ RISC-V 的 `paging_init()` 从 memblock 分配并保留 Sv39 页表页，为内�
 
 ## v0.6 静态 ELF 与初始栈
 
-内核内嵌独立链接的 `/init` 和 `/bin/child`。首次启动和 `execve` 共用加载器。当前接受小端 ELF64、RV64 软浮点 ABI 的静态 `ET_EXEC`。加载器校验程序头、文件和用户地址范围、对齐以及可执行入口。各 `PT_LOAD` 的页范围按虚拟地址递增且互不重叠。文件字节按段内偏移复制，段尾 BSS 清零，整页 BSS 按需分配。段的 R/W/X 标志决定最终用户页权限。[ELF 程序头规范](https://gabi.xinuos.com/elf/07-pheader.html)
+`/init` 来自内嵌的 initramfs，`/disk/bin/child` 来自只读 ext2。首次启动和 `execve` 共用同一个通过 VFS 读取文件的加载器。当前接受小端 ELF64、RV64 软浮点 ABI 的静态 `ET_EXEC`。加载器校验程序头、文件和用户地址范围、对齐以及可执行入口。各 `PT_LOAD` 的页范围按虚拟地址递增且互不重叠。文件字节按段内偏移复制，段尾 BSS 清零，整页 BSS 按需分配。段的 R/W/X 标志决定最终用户页权限。[ELF 程序头规范](https://gabi.xinuos.com/elf/07-pheader.html)
 
 用户地址空间顶部预留 8 页可读写栈，下方留一页保护区。入口 `sp` 按 16 字节对齐，依次指向 `argc`、以空指针结尾的 `argv` 和 `envp`，以及含 `AT_PAGESZ`、`AT_ENTRY`、`AT_NULL` 的辅助向量。路径上限为 127 字节，参数和环境各最多 32 项，字符串合计上限为 3072 字节（含各自的 NUL）。内核从旧地址空间复制输入，在独立页表内完成装载和建栈，再切换根表并释放旧映像。失败时调用者在原程序内收到负 errno。
 

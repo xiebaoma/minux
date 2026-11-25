@@ -2,7 +2,7 @@
 #include <minux/fcntl.h>
 #include <minux/fs.h>
 
-/* ramfs 操作都在内存中完成。串行化查找和创建，以及数据缓冲的替换。 */
+/* 串行化路径查找、inode 缓存更新和 ramfs 文件修改。磁盘读取当前采用轮询。 */
 static struct spinlock fs_lock = SPINLOCK_INIT;
 
 static int walk(struct inode *root, const char *path, int flags, struct inode **out)

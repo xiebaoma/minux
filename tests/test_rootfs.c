@@ -22,7 +22,7 @@ void test_rootfs(void)
 	check(!vfs_lookup(root_inode, "/../../", &node) && node == root_inode,
 	      "vfs: .. at root stays at root");
 	check(vfs_open(root_inode, "/bin", &file) == -EISDIR &&
-	      vfs_open(root_inode, "/bin/child/", &file) == -ENOTDIR &&
+	      vfs_open(root_inode, "/init/", &file) == -ENOTDIR &&
 	      vfs_open(root_inode, "/init/../bin", &file) == -ENOTDIR,
 	      "vfs: require directories for intermediate components and trailing slash");
 	check(vfs_open(root_inode, "/bin/chil", &file) == -ENOENT &&

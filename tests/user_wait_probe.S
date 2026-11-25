@@ -508,5 +508,5 @@ wait_probe_fault:
 .Lpipes: .asciz "/test/pipes"
 .Lconsole: .asciz "/dev/console"
 .Linit_path: .asciz "/init"
-.Lchild_path: .asciz "/bin/child"
+.Lchild_path: .asciz "/disk/bin/child"
 wait_probe_end:

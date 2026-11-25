@@ -9,6 +9,8 @@
 struct ramfs_node {
 	struct inode inode;
 	struct ramfs_node *children, *next;
+	struct inode *mounted;
+	void (*unmount)(struct inode *);
 	size_t namelen;
 	const u8 *archive_data;				//指向内嵌 cpio 归档中的原始文件内容。刚挂载时直接从这里读取，无须复制内容。
 	u8 *storage;						//指向后来分配的可写内存。文件被写入后，读取会优先使用它；新创建的文件也用它保存内容。
@@ -32,7 +34,7 @@ static int ramfs_lookup(const struct inode *dir, const char *name, size_t len,
 
 	if (!child)
 		return -ENOENT;
-	*out = &child->inode;
+	*out = child->mounted ? child->mounted : &child->inode;
 	return 0;
 }
 
@@ -184,6 +186,19 @@ int ramfs_add(struct ramfs_node *root, const char *path, bool directory,
 	return 0;
 }
 
+int ramfs_attach(struct inode *mountpoint, struct inode *root, void (*unmount)(struct inode *))
+{
+	if (mountpoint->lookup != ramfs_lookup || !root->lookup || !mountpoint->parent)
+		return -ENOTDIR;
+	struct ramfs_node *n = container_of(mountpoint, struct ramfs_node, inode);
+	if (n->mounted)
+		return -EEXIST;
+	root->parent = mountpoint->parent;
+	n->mounted = root;
+	n->unmount = unmount;
+	return 0;
+}
+
 void ramfs_destroy(const struct inode *root)
 {
 	struct ramfs_node *node = container_of(root, struct ramfs_node, inode);
@@ -197,6 +212,8 @@ void ramfs_destroy(const struct inode *root)
 			node->children = child->next;
 			node = child;
 		} else {
+			if (node->mounted)
+				node->unmount(node->mounted);
 			kfree(node->storage);
 			kfree(node);
 			if (!parent)
