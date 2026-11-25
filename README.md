@@ -50,33 +50,15 @@ minux: hello through pipe
 user task 1: exit 0
 ```
 
-## 文件系统接口
+## 复现 v0.7 换盘验收
 
-每进程有 16 个 fd 槽，`openat` 分配最低可用编号。支持普通文件的 `O_RDONLY`、`O_WRONLY`、`O_RDWR`、`O_CREAT`、`O_EXCL` 和可写打开时的 `O_TRUNC`。绝对路径忽略 `dirfd`，相对路径仅支持 `AT_FDCWD`，当前工作目录固定为 `/`。创建时接受 `mode` 参数，权限检查留待后续版本。
+`make test` 依次用默认盘和替换盘启动同一个自测内核，预期父进程分别报告 `status 42` 和 `status 73`。两个镜像来自同一个生成脚本，只有磁盘程序的退出码不同。要在普通内核上手动观察，先运行 `make run`，看到父进程退出后按 `Ctrl-A X` 退出 QEMU，再执行以下命令。
 
-普通文件的 `read` 和 `write` 按实际传输量推进偏移。独立打开各有自己的位置，fork 继承的 fd 共享位置，exec 保留 fd，close 和进程退出释放引用。归档文件首次写入时复制到可写内存，重启后恢复归档内容。
+```sh
+make run DISK=build/disk-alt.ext2
+```
 
-根文件系统挂载时注册只写设备 `/dev/console`，内核为初始 `/init` 打开它作为标准输出（fd 1）。上例中的 `minux: hello through pipe` 是子进程写入匿名管道、父进程从管道读回后通过 `write(1, …)` 输出的内容。
-
-`pipe2(fds, 0)` 返回读端和写端。每条管道有 4096 字节的环形缓冲区，读空、写满时通过等待队列睡眠。最多 4096 字节的单次写入会等待足够空间。最后一个写端关闭后，读端先读完剩余数据，再返回 0；最后一个读端关闭后，写入返回 `-EPIPE`。当前仅支持阻塞模式。
-
-## 只读 ext2 与磁盘换盘验收
-
-`make` 调用宿主机的 `mke2fs`、`debugfs` 和 `e2fsck` 制作并校验 raw 镜像。脚本会查找常用的 Linux 和 Homebrew 安装目录。镜像固定为 2 MiB，块大小为 1 KiB，含 128 个 256 字节的 inode，并固定 UUID、时间戳和文件系统特性。Minux 内核通过自己的 ext2 实现和块缓存读取镜像。
-
-`/disk` 支持多级目录、普通文件、12 个直接块和一级间接块。在 1 KiB 块的镜像上，单文件最多支持 268 KiB。测试文件 `/disk/share/probe/pattern` 跨过直接块与间接块的边界。创建和写打开均返回 `-EROFS`，需要写入的用户数据仍放在 ramfs 的 `/tmp`。
-
-`make test` 只构建一次自测内核。两次启动分别使用 `build/test/disk.ext2` 和 `build/test/disk-alt.ext2`；集成测试从串口核对子进程退出日志，以及父进程从 `wait4` 状态字解出的 42 和 73。可用 `make build/disk-alt.ext2` 和 `make run DISK=build/disk-alt.ext2` 在普通内核上复现第二次启动。
-
-## 只读块设备
-
-`make run` 和 `make debug` 默认以只读方式接入 `build/disk.ext2`，也可用 `DISK=/path/to/disk.ext2` 指定符合上述读取范围的 ext2 镜像。直接启动内核且不附加磁盘时仍能从 ramfs 启动 `/init`，执行磁盘子程序需要挂载含 `/bin/child` 的镜像。
-
-通用层提供直接读 `blk_read` 和缓存读 `blk_read_cached`，参数为起始扇区、扇区数和内核缓冲区。每台设备有 8 个直接映射的扇区缓存槽。整个范围在发出 I/O 前检查。零长度读可从盘尾开始，后端在多扇区读取中途出错时，前面成功读取的数据可能已复制。容量和镜像内容在挂载期间应保持固定。
-
-RISC-V 平台从设备树收集启用的 virtio-mmio 窗口，驱动选取第一块现代 MMIO v2 块设备。队列 0 同时处理一个读请求，轮询完成后才将数据交给调用者。若设备超时，驱动停用该队列并保留 DMA 缓冲区。
-
-`make test` 会分别报告 `block (memory)` 和 `block (virtio-mmio)`。测试盘在 ext2 卷尾之外附加 32 个已知扇区，与内存模拟盘共用容量、内容和越界检查，内存设备另外记录后端读取次数并模拟 I/O 失败，以验证缓存命中、替换和重试。
+Make 会按需生成替换盘。两次启动均使用 `build/minux.elf`，写入 `/tmp` 的内容只在当次启动有效。[文件系统设计与测试范围](docs/FS.md)
 
 ## 目录结构
 
@@ -96,11 +78,12 @@ lib/                   通用库函数（string、vsprintf）
 mm/                    启动内存表、buddy、slab、虚拟地址空间管理
 user/                  用户程序 /init（启动归档）和 /disk/bin/child（ext2）
 tests/                 内核自测和 QEMU 串口集成测试
-docs/                  内存管理、调度、FDT、异常与中断设计文档及路线图
+docs/                  文件系统、内存管理、调度、FDT、异常与中断设计文档及路线图
 ```
 
 ## 设计文档与路线图
 
+- [文件系统](docs/FS.md)
 - [内存管理](docs/MM.md)
 - [内核线程与调度](docs/SCHED.md)
 - [路线图](docs/ROADMAP.md)

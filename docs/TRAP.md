@@ -14,9 +14,9 @@ v0.6 第一步支持从 U 模式进入 trap。内核执行时 `sscratch` 为零�
 
 用户任务首次运行时使用内核预建的 `pt_regs`，设置用户入口和栈指针，并通过同一条 `sret` 路径进入 U 模式。此时 `sstatus.SPP` 为零。时钟抢占后的返回也使用这条路径。
 
-## v0.6 系统调用与用户异常
+## 系统调用与用户异常
 
-U 模式的 `ecall` 进入 RISC-V 系统调用分发。Linux RV64 ABI 使用 `a7` 传调用号、`a0` 到 `a5` 传参数、`a0` 接收结果。当前实现 `exit`（93）、`getpid`（172）、`clone`（220）、`execve`（221）和 `wait4`（260），未知调用返回 `-ENOSYS`。分发前将 `sepc` 增加 4，使返回用户态后从下一条指令继续执行。`execve` 成功时用新程序的入口、栈指针和清零后的寄存器替换旧现场，并执行 `fence.i`。
+U 模式的 `ecall` 进入 RISC-V 系统调用分发。Linux RV64 ABI 使用 `a7` 传调用号、`a0` 到 `a5` 传参数、`a0` 接收结果。v0.6 提供 `exit`（93）、`getpid`（172）、`clone`（220）、`execve`（221）和 `wait4`（260）。v0.7 新增 `openat`（56）、`close`（57）、`pipe2`（59）、`read`（63）和 `write`（64）。未知调用返回 `-ENOSYS`。分发前将 `sepc` 增加 4，使返回用户态后从下一条指令继续执行。`execve` 成功时用新程序的入口、栈指针和清零后的寄存器替换旧现场，并执行 `fence.i`。
 
 取指、读和写缺页分别转成对应的内存访问权限。若内存管理成功补页或完成写时复制，保留 `sepc` 并重试原指令。其余同步用户异常会记录 PID、异常号和地址，将异常映射成退出状态中的信号编号，然后通过 `task_exit_current()` 切走。父进程可用 `wait4` 读取该状态。[内存管理](MM.md) · [退出与等待](SCHED.md)
 
@@ -30,7 +30,7 @@ SBI TIME 的参数是绝对时间，且设置未来的截止时间会清除待�
 
 ## PLIC 与 UART 接收
 
-`virt_probe_irq_devices()` 再次遍历 DTB，读取 `/soc` 下的 PLIC 和 `ns16550a` UART 地址、UART 中断号以及 PLIC 的 S 模式上下文。当前只支持 QEMU `virt` 的单 hart 配置：`/soc/ranges` 必须为空，PLIC 的 `interrupts-extended` 每项按一个 phandle cell 加一个中断 cell 解析。探测时还会确认 UART 的 `interrupt-parent` 指向该 PLIC。当前 QEMU 配置得到 PLIC `0x0c000000`、S 上下文 1、UART `0x10000000`、IRQ 10。
+`virt_probe_devices()` 再次遍历 DTB，读取 `/soc` 下的 PLIC 和 `ns16550a` UART 地址、UART 中断号以及 PLIC 的 S 模式上下文。当前只支持 QEMU `virt` 的单 hart 配置：`/soc/ranges` 必须为空，PLIC 的 `interrupts-extended` 每项按一个 phandle cell 加一个中断 cell 解析。探测时还会确认 UART 的 `interrupt-parent` 指向该 PLIC。当前 QEMU 配置得到 PLIC `0x0c000000`、S 上下文 1、UART `0x10000000`、IRQ 10。
 
 PLIC 为 UART IRQ 设置正优先级、打开 S 上下文的 enable 位，并把阈值设为 0。UART 保留 OpenSBI 配置的波特率，开启接收 FIFO 与接收数据中断；最后打开 `sie.SEIE`。收到字符时，UART 向 PLIC 请求中断，CPU 进入 `scause=9` 的 trap。处理代码从 PLIC 认领 IRQ，读空 UART 接收 FIFO 并逐字节回显，再向 PLIC 写回同一 IRQ 号表示完成。PLIC 寄存器布局和认领流程见 [PLIC 规范](https://docs.riscv.org/reference/hardware/plic/_attachments/riscv-plic.pdf)。
 
