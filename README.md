@@ -9,7 +9,7 @@ Minux 是一个面向 RISC-V 64 的类 Unix 宏内核。它以 Linux 的内核�
 - **平台**：RISC-V 64（RV64IMAC），首要目标机器为 QEMU `virt`
 - **语言**：C（GNU C11），只在必要处使用汇编
 - **架构**：宏内核。子系统划分和核心数据结构（`task_struct`、VFS、buddy 分配器等）参照 Linux
-- **ABI**：兼容 Linux RISC-V 系统调用接口，目标是直接运行 musl 静态链接的用户程序
+- **用户环境**：沿用 Linux RISC-V 系统调用 ABI，从零实现 Minux 的用户态 libc、命令和 shell，按程序实际需要逐步增加接口
 
 ## 构建依赖
 
