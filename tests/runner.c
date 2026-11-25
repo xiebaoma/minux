@@ -23,6 +23,7 @@ static const struct test_suite suites[] = {
 	{ "mm",     test_mm },
 	{ "elf",    test_elf },
 	{ "initramfs", test_initramfs },
+	{ "block (memory)", test_memory_block },
 	{ "task",   test_task },
 	{ "sched",  test_sched },
 };
@@ -90,6 +91,7 @@ void run_selftests(void)
 
 void run_rootfs_selftests(void)
 {
+	run_suite("block (virtio-mmio)", test_virtio_block);
 	run_suite("rootfs", test_rootfs);
 	run_suite("user wait", test_user_wait);
 }

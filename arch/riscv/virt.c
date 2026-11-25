@@ -1,11 +1,18 @@
 #include <asm/virt.h>
 #include <minux/fdt.h>
+#include <minux/errno.h>
+#include <minux/page.h>
+#include <minux/virtio_blk.h>
 #include <minux/limits.h>
 #include <minux/panic.h>
 #include <minux/string.h>
 
 /* fdt_walk 的回调没有私有参数；启动时只有一个 hart 顺序执行探测。 */
+static struct virt_devices *platform;
 static struct virt_irq_devices *probe;
+static const void *slot_reg;
+static u32 slot_reg_len;
+static bool slot_compatible, slot_enabled;
 static bool in_soc, in_plic, in_uart;
 static bool soc_has_ranges, plic_compatible, uart_compatible;
 static u32 soc_address_cells, soc_size_cells;
@@ -70,6 +77,9 @@ static void probe_node(const char *name, unsigned int depth)
 	if (depth == 1)
 		in_soc = strcmp(name, "soc") == 0;
 	if (depth == 2) {
+		slot_reg = NULL;
+		slot_compatible = false;
+		slot_enabled = true;
 		in_plic = in_soc &&
 			strncmp(name, "interrupt-controller@", 21) == 0;
 		in_uart = in_soc && strncmp(name, "serial@", 7) == 0;
@@ -140,30 +150,69 @@ static void probe_property(const char *name, const void *value,
 			if (!fdt_read_u32(value, len, &probe->uart_irq))
 				panic("invalid UART interrupts");
 		}
+	} else if (in_soc) {
+		if (!strcmp(name, "compatible"))
+			slot_compatible = compatible_has(value, len, "virtio,mmio");
+		else if (!strcmp(name, "reg")) {
+			slot_reg = value;
+			slot_reg_len = len;
+		} else if (!strcmp(name, "status")) {
+			slot_enabled = (len == 3 && !memcmp(value, "ok", 3)) ||
+				       (len == 5 && !memcmp(value, "okay", 5));
+		}
 	}
 }
 
-void virt_probe_irq_devices(const void *dtb, unsigned long hartid,
-			    struct virt_irq_devices *devices)
+static void finish_device(unsigned int depth)
+{
+	uintptr_t base;
+	size_t size;
+
+	if (depth != 2 || !in_soc || !slot_compatible || !slot_enabled)
+		return;
+	if (!slot_reg || platform->nr_mmio == sizeof(platform->mmio) / sizeof(platform->mmio[0]))
+		panic("missing reg or too many virtio-mmio slots");
+	read_mmio_reg(slot_reg, slot_reg_len, &base, &size);
+	platform->mmio[platform->nr_mmio++] = (struct memblock_region){ base, base + size };
+}
+
+void virt_probe_devices(const void *dtb, unsigned long hartid, struct virt_devices *devices)
 {
 	if (hartid != 0 || !devices)
 		panic("only QEMU virt hart 0 is supported");
 	memset(devices, 0, sizeof(*devices));
-	probe = devices;
-	devices->plic_s_context = ~0U;
+	platform = devices;
+	probe = &devices->irq;
+	devices->nr_mmio = VIRT_IRQ_MMIO_COUNT;
+	probe->plic_s_context = ~0U;
 	/* DT 规范的默认值；QEMU /soc 会显式覆盖为 2、2。 */
 	soc_address_cells = 2;
 	soc_size_cells = 1;
-	if (!fdt_walk(dtb, probe_node, probe_property, NULL))
-		panic("invalid FDT while probing IRQ devices");
+	if (!fdt_walk(dtb, probe_node, probe_property, finish_device))
+		panic("invalid FDT while probing QEMU virt devices");
 	if (!soc_has_ranges || !plic_compatible || !uart_compatible ||
 	    !plic_phandle || uart_interrupt_parent != plic_phandle ||
-	    !devices->plic_base || !devices->uart_base ||
-	    devices->plic_s_context == ~0U ||
-	    !devices->plic_ndev || !devices->uart_irq ||
-	    devices->uart_irq > devices->plic_ndev ||
-	    devices->uart_size < 8 || devices->plic_size < 0x200008UL +
-						devices->plic_s_context * 0x1000UL)
+	    !probe->plic_base || !probe->uart_base ||
+	    probe->plic_s_context == ~0U ||
+	    !probe->plic_ndev || !probe->uart_irq ||
+	    probe->uart_irq > probe->plic_ndev ||
+	    probe->uart_size < 8 || probe->plic_size < 0x200008UL +
+						probe->plic_s_context * 0x1000UL)
 		panic("missing or unsupported QEMU virt IRQ devices");
+	devices->mmio[0] = (struct memblock_region){ probe->plic_base, probe->plic_base + probe->plic_size };
+	devices->mmio[1] = (struct memblock_region){ probe->uart_base, probe->uart_base + probe->uart_size };
 	probe = NULL;
+	platform = NULL;
+}
+
+int virt_probe_boot_disk(const struct virt_devices *devices, u32 clock_hz, struct block_device **out)
+{
+	for (size_t i = VIRT_IRQ_MMIO_COUNT; i < devices->nr_mmio; i++) {
+		const struct memblock_region *slot = &devices->mmio[i];
+		uintptr_t regs = (uintptr_t)arch_phys_to_virt(slot->start);
+		int err = virtio_blk_probe(regs, slot->end - slot->start, clock_hz, out);
+		if (err != -ENODEV)
+			return err;
+	}
+	return -ENODEV;
 }

@@ -30,7 +30,7 @@ LDFLAGS := -T $(ARCH)/kernel.ld -nostdlib --no-relax
 
 # 自动收集这些目录下的源文件：新建 .c 文件后无需改 Makefile。
 # 链接顺序无所谓：_start 位于 .text.entry 段，链接脚本保证它排在最前。
-SRC_DIRS := $(ARCH) init lib kernel mm fs
+SRC_DIRS := $(ARCH) init lib kernel mm fs block drivers/virtio
 ifeq ($(TEST),1)
 SRC_DIRS += tests
 CFLAGS   += -DCONFIG_SELFTEST
@@ -40,17 +40,25 @@ OBJS := $(patsubst %,$(BUILD)/%.o,$(basename $(SRCS)))
 
 QEMU      := qemu-system-riscv64
 QEMU_BASE_FLAGS := -machine virt -nographic -bios default -m 128M -smp 1
-QEMUFLAGS := $(QEMU_BASE_FLAGS) -kernel $(KERNEL)
+BLOCK_FIXTURE := $(BUILD)/block-test.img
+DISK ?= $(BLOCK_FIXTURE)
+qemu_disk = -global virtio-mmio.force-legacy=false -drive if=none,id=vd0,format=raw,readonly=on,file="$(1)" -device virtio-blk-device,drive=vd0
+QEMUFLAGS := $(QEMU_BASE_FLAGS) $(call qemu_disk,$(DISK)) -kernel $(KERNEL)
 
 .PHONY: all run test debug dump clean
 
-all: $(KERNEL)
+all: $(KERNEL) $(BLOCK_FIXTURE)
+
+$(BLOCK_FIXTURE): tools/mkblockimage.py
+	@mkdir -p $(dir $@)
+	python3 $< $@.tmp
+	mv $@.tmp $@
 
 # 构建带自测的内核，在 QEMU 中验证内核自测和 UART/PLIC 中断
 test:
 	$(MAKE) TEST=1 all
 	python3 tests/test_uart_irq.py $(QEMU) $(QEMU_BASE_FLAGS) \
-		-kernel build/test/minux.elf -monitor none -serial stdio
+		$(call qemu_disk,build/test/block-test.img) -kernel build/test/minux.elf -monitor none -serial stdio
 
 $(KERNEL): $(OBJS) $(ARCH)/kernel.ld
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)
@@ -100,11 +108,11 @@ $(BUILD)/%.o: %.S
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-run: $(KERNEL)
+run: $(KERNEL) $(BLOCK_FIXTURE)
 	$(QEMU) $(QEMUFLAGS)
 
 # 启动后暂停，等待 GDB 连接 localhost:1234
-debug: $(KERNEL)
+debug: $(KERNEL) $(BLOCK_FIXTURE)
 	$(QEMU) $(QEMUFLAGS) -s -S
 
 dump: $(KERNEL)

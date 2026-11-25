@@ -34,6 +34,8 @@ void test_slab(void);
 void test_sv39(void);
 void test_mm(void);
 void test_elf(void);
+void test_memory_block(void);
+void test_virtio_block(void);
 void test_rootfs(void);
 void test_initramfs(void);
 void test_task(void);

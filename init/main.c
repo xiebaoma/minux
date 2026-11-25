@@ -5,6 +5,8 @@
 #include <asm/uart.h>
 #include <asm/virt.h>
 #include <minux/buddy.h>
+#include <minux/block.h>
+#include <minux/errno.h>
 #include <minux/fdt.h>
 #include <minux/fs.h>
 #include <minux/elf.h>
@@ -31,7 +33,8 @@ static bool current_root_child_is_cpus;
 static bool reserved_available;
 static bool reserved_needs_translation;
 static u32 timebase_frequency;
-static struct virt_irq_devices irq_devices;
+static struct virt_devices devices;
+struct block_device *boot_disk;
 
 static struct memory_node {
 	const char *name;
@@ -251,13 +254,8 @@ void start_kernel(unsigned long hartid, unsigned long dtb_pa,
 		panic("invalid FDT memory reservation block");
 
 	/* 用完 DTB 后，在交给 buddy 前为启动页表保留物理页。 */
-	virt_probe_irq_devices((const void *)dtb_pa, hartid, &irq_devices);
-	const struct memblock_region mmio[] = {
-		{ irq_devices.plic_base, irq_devices.plic_base + irq_devices.plic_size },
-		{ irq_devices.uart_base, irq_devices.uart_base + irq_devices.uart_size },
-	};
-	paging_init(&boot_memblock, mmio, sizeof(mmio) / sizeof(mmio[0]),
-		    start_kernel_mapped);
+	virt_probe_devices((const void *)dtb_pa, hartid, &devices);
+	paging_init(&boot_memblock, devices.mmio, devices.nr_mmio, start_kernel_mapped);
 }
 
 static void start_kernel_mapped(void)
@@ -277,6 +275,12 @@ static void start_kernel_mapped(void)
 
 	/* 只在 `make test` 构建时有效，普通构建下是空函数 */
 	run_selftests();
+	err = virt_probe_boot_disk(&devices, timebase_frequency, &boot_disk);
+	if (!err)
+		pr_info("virtio-blk: %llu sectors of %u bytes, read-only\n",
+			boot_disk->sectors, BLK_SECTOR_SIZE);
+	else if (err != -ENODEV)
+		pr_err("virtio-blk: probe failed: %d\n", err);
 	err = rootfs_init();
 	if (err)
 		panic("cannot mount initramfs: %d", err);
@@ -284,10 +288,10 @@ static void start_kernel_mapped(void)
 
 	/* 打开总中断前配置 PLIC 和 UART。 */
 	pr_info("PLIC: base=0x%lx, S context=%u; UART: base=0x%lx, IRQ=%u\n",
-		irq_devices.plic_base, irq_devices.plic_s_context,
-		irq_devices.uart_base, irq_devices.uart_irq);
-	plic_init(&irq_devices);
-	uart_init(&irq_devices);
+		devices.irq.plic_base, devices.irq.plic_s_context,
+		devices.irq.uart_base, devices.irq.uart_irq);
+	plic_init(&devices.irq);
+	uart_init(&devices.irq);
 
 	timer_init(timebase_frequency);
 	arch_local_irq_enable();
