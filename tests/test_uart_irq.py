@@ -10,6 +10,7 @@ import time
 
 TYPED = b"IRQ-onxy"
 EDITED_LINE = b"IRQ-one\r\n"
+PROMPT = b"minux$ "
 TIMEOUT = 20
 
 
@@ -49,7 +50,7 @@ def main():
         end = wait_for(marker, start)
         match = re.search(rb"user task (\d+)" + re.escape(marker), output[start:end])
         if not match or match[1] == parent_pid:
-            raise RuntimeError(f"/init did not exec {path!r} in a child")
+            raise RuntimeError(f"{path!r} did not run in a child")
         return match[1], end
 
     def send(keys):
@@ -71,9 +72,34 @@ def main():
         child_done = wait_for(b"user task " + disk_pid + b": exit " + expected + b"\r\n", disk_start)
         reaped = wait_for(b"init: reaped disk child, status " + expected + b"\r\n", child_done)
         console_done = wait_for(b"minux: hello through pipe\r\n", reaped)
-        cat_start = wait_for(b"user task " + init[1] + b": exec /bin/cat\r\n", console_done)
+        shell_start = wait_for(b"user task " + init[1] + b": exec /bin/sh\r\n", console_done)
+        prompt = wait_for(PROMPT, shell_start)
+        send(b"/bin/echo hello\n")
+        echo_pid, echo_start = wait_for_child_exec(b"/bin/echo", max(ready, prompt), init[1])
+        hello = wait_for(b"hello\r\n", echo_start)
+        prompt = wait_for(PROMPT, wait_for(b"user task " + echo_pid + b": exit 0\r\n", hello))
+
+        send(b"/bin/missing\n")
+        failed = wait_for(b"sh: cannot execute /bin/missing\r\n", prompt)
+        prompt = wait_for(PROMPT, wait_for(b": exit 127\r\n", failed))
+        for command, error in [
+            (b"echo hello", b"sh: expected an absolute path"),
+            (b"/bin/echo " + b"x" * 118, b"sh: command line too long"),
+            (b"/bin/echo" + b" x" * 32, b"sh: too many arguments"),
+        ]:
+            send(command + b"\n")
+            prompt = wait_for(PROMPT, wait_for(error + b"\r\n", prompt))
+        send(b"  \t\n")
+        prompt = wait_for(PROMPT, prompt)
+        send(b"  /bin/echo\tstill   here \n")
+        echo_pid, echo_start = wait_for_child_exec(b"/bin/echo", prompt, init[1])
+        recovered = wait_for(b"still here\r\n", echo_start)
+        prompt = wait_for(PROMPT, wait_for(b"user task " + echo_pid + b": exit 0\r\n", recovered))
+
+        send(b"/bin/cat\n")
+        cat_pid, cat_start = wait_for_child_exec(b"/bin/cat", prompt, init[1])
         send(TYPED)
-        first_end = wait_for(TYPED, max(ready, cat_start))
+        first_end = wait_for(TYPED, cat_start)
         # The unfinished line is echoed immediately, while cat stays blocked.
         tick_end = wait_for(b"timer: 10 ticks\r\n", first_end)
         send(b"\x7f\be\r")
@@ -85,7 +111,12 @@ def main():
         send(b"IRQ-two\n")
         complete = wait_for(b"IRQ-two\r\nIRQ-two\r\n", partial)
         send(b"\x04")
-        wait_for(b"user task " + init[1] + b": exit 0\r\n", complete)
+        cat_exit = wait_for(b"user task " + cat_pid + b": exit 0\r\n", complete)
+        if PROMPT in output[cat_start:cat_exit]:
+            raise RuntimeError("shell prompted while cat still owned stdin")
+        prompt = wait_for(PROMPT, cat_exit)
+        send(b"\x04")
+        wait_for(b"user task " + init[1] + b": exit 0\r\n", prompt)
 
         while read_chunk():
             pass
@@ -114,6 +145,7 @@ def main():
     print(f"/init reaped /disk/bin/child with expected exit code {expected.decode()}")
     print("anonymous pipe, EOF and stdout via /dev/console passed")
     print("UART/PLIC, canonical stdin, echo, erase and Ctrl-D integration test passed")
+    print("Shell foreground commands, argument parsing and recovery after errors passed")
 
 
 if __name__ == "__main__":

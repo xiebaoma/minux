@@ -120,7 +120,7 @@ wait_probe_exec:
     bnez    t0, .Lfail
     j       .Ldone
 .Lexec_init:
-    /* 自测在 UART 启用前运行，以空文件作为 stdin 使 cat 读到 EOF。 */
+    /* 自测在 UART 启用前运行，以空文件作为 stdin 使 shell 读到 EOF。 */
     li      a0, AT_FDCWD
     la      a1, .Lempty_stdin
     li      a2, O_RDONLY|O_CREAT

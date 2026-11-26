@@ -87,7 +87,7 @@ $(BUILD)/user/%.elf: $(BUILD)/user/%.o $(ARCH)/user.ld
 
 # 只打包清单中的文件；先写临时文件，避免失败后复用半个归档。
 ROOTDIR := $(BUILD)/rootfs
-USER_COMMANDS := hello echo cat
+USER_COMMANDS := hello echo cat sh
 ROOT_FILES := init $(addprefix bin/,$(USER_COMMANDS))
 ROOT_DIRS := bin tmp dev disk
 ifeq ($(TEST),1)
@@ -115,7 +115,6 @@ $(ROOTDIR)/bin/%: $(BUILD)/user/%.o $(USER_CRT) $(USER_LIBDIR)/libc.a $(ARCH)/us
 	@mkdir -p $(dir $@)
 	$(LD) -T $(ARCH)/user.ld --no-relax -s -o $@ $(USER_CRT) $< $(USER_LIBDIR)/libc.a
 
-$(BUILD)/tests/user/commands.o: CPPFLAGS += -I$(ARCH)/include -idirafter include
 $(ROOTDIR)/test/commands: $(BUILD)/tests/user/commands.o $(USER_CRT) $(USER_LIBDIR)/libc.a $(ARCH)/user.ld
 	@mkdir -p $(dir $@)
 	$(LD) -T $(ARCH)/user.ld --no-relax -s -o $@ $(USER_CRT) $< $(USER_LIBDIR)/libc.a

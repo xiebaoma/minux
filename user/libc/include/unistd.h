@@ -2,8 +2,7 @@
 #define MINUX_USER_UNISTD_H
 
 #include <stddef.h>
-
-typedef __PTRDIFF_TYPE__ ssize_t;
+#include <sys/types.h>
 
 #define STDIN_FILENO 0
 #define STDOUT_FILENO 1
@@ -13,6 +12,8 @@ typedef __PTRDIFF_TYPE__ ssize_t;
 ssize_t read(int fd, void *buf, size_t count);
 ssize_t write(int fd, const void *buf, size_t count);
 int close(int fd);
+pid_t fork(void);
+int execve(const char *path, char *const argv[], char *const envp[]);
 _Noreturn void _exit(int status);
 
 #endif

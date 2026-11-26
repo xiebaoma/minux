@@ -1,5 +1,6 @@
 #include <asm/unistd.h>
 #include <minux/fcntl.h>
+#include <minux/signal.h>
 
     .text
     .globl open
@@ -42,6 +43,37 @@ write:
     ecall
     ret
     .size write, . - write
+
+    .globl fork
+    .type fork, @function
+fork:
+    /* clone(SIGCHLD, NULL, NULL, 0, NULL) */
+    li      a0, SIGCHLD
+    li      a1, 0
+    li      a2, 0
+    li      a3, 0
+    li      a4, 0
+    li      a7, __NR_clone
+    ecall
+    ret
+    .size fork, . - fork
+
+    .globl execve
+    .type execve, @function
+execve:
+    li      a7, __NR_execve
+    ecall
+    ret
+    .size execve, . - execve
+
+    .globl waitpid
+    .type waitpid, @function
+waitpid:
+    li      a3, 0               /* wait4 的 rusage 为 NULL。 */
+    li      a7, __NR_wait4
+    ecall
+    ret
+    .size waitpid, . - waitpid
 
     .globl _exit
     .type _exit, @function

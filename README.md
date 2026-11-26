@@ -2,7 +2,7 @@
 
 Minux 是一个面向 RISC-V 64 的类 Unix 宏内核。它以 Linux 的内核架构为参照，在保持代码精简、可读的前提下，提供与 Linux 兼容的系统调用接口。
 
-> **v0.8 已支持串口按行输入。** initramfs 中的 `/bin/echo` 和 `/bin/cat` 使用 Minux 自己的 libc。启动后，`/init` 执行无参数的 `cat`，可以直接在 QEMU 串口编辑一行并按回车，让 `cat` 从标准输入读回这行文字。
+> **v0.8 已支持交互式 shell。** 运行 `make run`，在串口的 `minux$ ` 提示符后输入 `/bin/echo hello` 并按回车，即可看到 `hello`。shell 和命令都使用 Minux 自己的 libc。
 
 ## 设计目标
 
@@ -34,7 +34,7 @@ brew install qemu riscv64-elf-gcc python e2fsprogs
 |---|---|
 | `make` | 构建内核 `build/minux.elf` 和只读 ext2 镜像 `build/disk.ext2` |
 | `make run` | 在 QEMU 中启动（按 `Ctrl-A X` 退出） |
-| `make test` | 用同一内核分别启动两张盘，每次运行全部内核自测，并核对磁盘程序退出值、串口回显、用户态实际读到的内容和关机 |
+| `make test` | 用同一内核分别启动两张盘，每次运行全部内核自测，并核对磁盘程序退出值、串口输入、shell 前台命令和错误恢复 |
 | `make debug` | 启动 QEMU 并在第一条指令前暂停，GDB 服务监听 `localhost:1234` |
 | `make dump` | 生成反汇编文件 `build/minux.asm` |
 | `make clean` | 清理构建产物 |
@@ -51,11 +51,17 @@ user task 3: exec /disk/bin/child
 user task 3: exit 42
 init: reaped disk child, status 42
 minux: hello through pipe
-tty: type a line; Ctrl-D on an empty line exits cat
-user task 1: exec /bin/cat
+user task 1: exec /bin/sh
+minux$ /bin/echo hello
+user task 4: exec /bin/echo
+hello
+user task 4: exit 0
+minux$
 ```
 
-输入 `minuz`，按一次退格，再输入 `x`。此时屏幕上的输入应为 `minux`。按回车后，下一行是 `cat` 从 fd 0 读到并输出的 `minux`。在空行首按 Ctrl-D，串口会显示 `user task 1: exit 0`。在已有文字后按 Ctrl-D，则会把这段文字交给 `cat`，不附加换行。
+shell 接受绝对路径，按空格和制表符拆分参数。每行最多 127 字节，最多 32 个参数（含命令名）。输入不存在的路径或超出上限时，shell 会报错并再次显示提示符。
+
+输入 `/bin/cat` 启动前台程序，再输入 `minuz`、按退格、输入 `x` 并按回车。`cat` 会输出修正后的 `minux`。在空行首按 Ctrl-D 结束 `cat` 并返回 shell，在空提示符处再按 Ctrl-D 退出 shell。
 
 ## 复现 v0.7 换盘验收
 
@@ -83,7 +89,7 @@ init/                  通用初始化（start_kernel）
 kernel/                核心子系统（printk、panic、任务与调度）
 lib/                   通用库函数（string、vsprintf）
 mm/                    启动内存表、buddy、slab、虚拟地址空间管理
-user/                  /init、hello、echo、cat（启动归档）和 /disk/bin/child（ext2）
+user/                  /init、hello、echo、cat、sh（启动归档）和 /disk/bin/child（ext2）
   libc/                用户态头文件、RISC-V 启动入口和系统调用封装
 tests/                 内核自测和 QEMU 串口集成测试
 docs/                  文件系统、内存管理、调度、FDT、异常与中断设计文档及路线图

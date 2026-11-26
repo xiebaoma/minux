@@ -25,11 +25,9 @@
     .endm
 
     .section .rodata
-cat_path: .asciz "/bin/cat"
+sh_path: .asciz "/bin/sh"
     .balign 8
-cat_argv: .dword cat_path, 0
-tty_prompt: .ascii "tty: type a line; Ctrl-D on an empty line exits cat\n"
-    .equ TTY_PROMPT_LEN, . - tty_prompt
+sh_argv: .dword sh_path, 0
 hello_path: .asciz "/bin/hello"
 hello_arg:  .asciz "hello from Minux libc\n"
     .balign 8
@@ -183,15 +181,8 @@ _start:
     li a7, __NR_close
     ecall
     bnez a0, .Lfail
-    li a0, 2                    /* 提示走 stderr；cat 从 stdin 读，向 stdout 写。 */
-    la a1, tty_prompt
-    li a2, TTY_PROMPT_LEN
-    li a7, __NR_write
-    ecall
-    li t0, TTY_PROMPT_LEN
-    bne a0, t0, .Lfail
-    la a0, cat_path
-    la a1, cat_argv
+    la a0, sh_path
+    la a1, sh_argv
     li a2, 0
     li a7, __NR_execve
     ecall
