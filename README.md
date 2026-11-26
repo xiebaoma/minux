@@ -2,7 +2,7 @@
 
 Minux 是一个面向 RISC-V 64 的类 Unix 宏内核。它以 Linux 的内核架构为参照，在保持代码精简、可读的前提下，提供与 Linux 兼容的系统调用接口。
 
-> **v0.8 的交互式 shell 已支持管道和文件重定向。** 运行 `make run`，即可在串口的 `minux$ ` 提示符下执行命令。shell 和命令都使用 Minux 自己的 libc。
+> **v0.8 用户环境已完成。** 运行 `make run`，即可在串口的 `minux$ ` 提示符下执行命令。shell 和命令都使用 Minux 自己的 libc。
 
 ## 设计目标
 
@@ -34,7 +34,7 @@ brew install qemu riscv64-elf-gcc python e2fsprogs
 |---|---|
 | `make` | 构建内核 `build/minux.elf` 和只读 ext2 镜像 `build/disk.ext2` |
 | `make run` | 在 QEMU 中启动（按 `Ctrl-A X` 退出） |
-| `make test` | 用同一内核分别启动两张盘，每次运行全部内核自测，并核对磁盘程序退出值、串口输入、shell 前台命令和错误恢复 |
+| `make test` | 用同一内核分别启动两张盘，每次运行全部内核自测，并核对磁盘程序退出值、串口输入、前台命令、管道重定向和错误恢复 |
 | `make debug` | 启动 QEMU 并在第一条指令前暂停，GDB 服务监听 `localhost:1234` |
 | `make dump` | 生成反汇编文件 `build/minux.asm` |
 | `make clean` | 清理构建产物 |
@@ -61,6 +61,8 @@ minux$
 
 shell 接受绝对路径，按空格和制表符拆分参数。每行最多 127 字节，每个命令最多 32 个参数（含命令名）。一条前台管道可以连接两个命令，操作符两侧的空格可省略。
 
+## 复现 v0.8 用户环境验收
+
 在同一次启动中依次输入以下两条命令。第一条把 `echo` 的输出经管道交给 `cat`，再写入 `/tmp/out`。第二条从该文件读回一行 `hello`，随后再次显示提示符。`>` 会创建文件或截断已有内容。
 
 ```sh
@@ -68,7 +70,7 @@ shell 接受绝对路径，按空格和制表符拆分参数。每行最多 127 
 /bin/cat < /tmp/out
 ```
 
-输入 `/bin/cat` 启动前台程序，再输入 `minuz`、按退格、输入 `x` 并按回车。`cat` 会输出修正后的 `minux`。在空行首按 Ctrl-D 结束 `cat` 并返回 shell，在空提示符处再按 Ctrl-D 退出 shell。
+输入不存在的绝对路径时，shell 会报错并返回提示符，可以继续执行下一条命令。输入 `/bin/cat` 启动前台程序，再输入 `minuz`、按退格、输入 `x` 并按回车。`cat` 会输出修正后的 `minux`。在空行首按 Ctrl-D 结束 `cat` 并返回 shell，在空提示符处再按 Ctrl-D 退出 shell。
 
 ## 复现 v0.7 换盘验收
 
