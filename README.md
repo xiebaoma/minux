@@ -1,8 +1,8 @@
 # Minux
 
-Minux 是一个面向 RISC-V 64 的类 Unix 宏内核。它以 Linux 的内核架构为参照，在保持代码精简、可读的前提下，提供与 Linux 兼容的系统调用接口。
+Minux 是一个面向 RISC-V 64 的类 Unix 宏内核。它参照 Linux 的内核架构，使用 Linux RISC-V 系统调用 ABI 的一个子集运行自带的用户态程序。
 
-> **v0.8 用户环境已完成。** 运行 `make run`，即可在串口的 `minux$ ` 提示符下执行命令。shell 和命令都使用 Minux 自己的 libc。
+**v1.0 是首个稳定版本。** 支持通过 OpenSBI 在 QEMU `virt` 上以单 hart 启动。内核提供 Sv39 虚拟内存、抢占式调度、用户进程和 VFS，用户环境包含串口 TTY、最小 libc、shell、`echo` 和 `cat`。
 
 ## 设计目标
 
@@ -30,14 +30,33 @@ brew install qemu riscv64-elf-gcc python e2fsprogs
 
 ## 构建与运行
 
+```bash
+git clone --branch v1.0 https://github.com/xiebaoma/minux.git
+cd minux
+make run
+```
+
+出现 `minux$ ` 提示符后，可以输入下面两行。第二行应输出 `hello Minux`。
+
+```text
+/bin/echo hello Minux | /bin/cat > /tmp/hello
+/bin/cat < /tmp/hello
+```
+
+shell 通过绝对路径执行前台命令，支持一条连接两个命令的管道，以及 `<` 和 `>` 重定向。`/tmp` 中的文件只保留到本次运行结束，`/disk` 是只读 ext2。按 `Ctrl-A` 后再按 `x` 退出 QEMU。
+
 | 命令 | 说明 |
 |---|---|
 | `make` | 构建内核 `build/minux.elf` 和只读 ext2 镜像 `build/disk.ext2` |
-| `make run` | 在 QEMU 中启动（按 `Ctrl-A X` 退出） |
-| `make test` | 用同一内核分别启动两张盘，每次运行全部内核自测，并核对磁盘程序退出值、串口输入、前台命令、管道重定向和错误恢复 |
+| `make run` | 构建并启动正式镜像 |
+| `make test` | 构建自测镜像并运行完整回归测试 |
 | `make debug` | 启动 QEMU 并在第一条指令前暂停，GDB 服务监听 `localhost:1234` |
 | `make dump` | 生成反汇编文件 `build/minux.asm` |
 | `make clean` | 清理构建产物 |
+
+## 测试
+
+`make test` 用同一个自测内核分别启动两张 ext2 测试盘。两轮都应报告 `537/537 passed, all OK`，并分别回收磁盘子程序的退出码 42 和 73。集成测试还会检查串口行编辑、Ctrl-D、前台进程、管道、文件重定向和错误恢复。命令返回 0 表示两轮回归全部通过。
 
 ## 目录结构
 
@@ -66,4 +85,6 @@ docs/                  文件系统、内存管理、调度、FDT、异常与中
 - [文件系统](docs/FS.md)
 - [内存管理](docs/MM.md)
 - [内核线程与调度](docs/SCHED.md)
+- [设备树与早期启动](docs/FDT.md)
+- [异常、系统调用与中断](docs/TRAP.md)
 - [路线图](docs/ROADMAP.md)

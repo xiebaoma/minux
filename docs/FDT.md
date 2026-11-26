@@ -36,8 +36,6 @@ DTB 是一块连续的扁平字节数据，不是已经展开的 C 节点树。�
 
 地址和长度分别支持 1 或 2 个 cell。启用的 `/reserved-memory` 若带非空 `ranges`，启动会报错停机。`no-map` 和 `reusable` 区域都从空闲页中扣除，映射和回收策略留待后续版本。解析器要求内存保留表、结构区、字符串区按此顺序排列。首次访问 `dtb_pa` 依赖可信的启动链，开启分页前需要为 DTB 建立有效映射或复制它。
 
-## v0.1 验收
+## 验证
 
-`make -B -j4` 和 `make -B -j4 TEST=1` 均可完成构建。当前 QEMU `virt`、128 MiB、单 hart 配置下，`make test` 输出 hart 0、`[0x80000000, 0x88000000)` 的 RAM，以及两段 OpenSBI 保留区；四组自测合计 `143/143 passed, all OK`。
-
-内核自测失败仍只会打印在控制台；`make test` 的 Python 集成脚本会检查自测汇总、QEMU 退出码和超时，因此可用命令退出码判定整轮测试是否成功。
+在 QEMU `virt` 的 128 MiB、单 hart 配置下，`make test` 的启动日志包含 hart 0、`[0x80000000, 0x88000000)` 的 RAM，以及 OpenSBI 保留区。内核的 `fdt` 和 `memblock` 自测随完整回归一起运行，集成脚本会检查自测汇总、QEMU 退出码和超时。[测试说明](../README.md#测试)

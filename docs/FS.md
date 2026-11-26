@@ -2,7 +2,7 @@
 
 ## 启动和挂载
 
-`rootfs_init()` 将内嵌的 newc 归档展开成 ramfs 目录树，注册控制台设备。探测到启动盘时，它读取 ext2 根 inode，并将它接到 ramfs 的 `/disk`。路径查找经过这个挂载点后使用 ext2 的目录操作，`/disk/..` 返回 ramfs 根。直接启动且未附加磁盘时，内核仍可运行归档中的 `/init`，其磁盘子程序需要单独提供镜像。[根文件系统初始化](../init/rootfs.c)
+`rootfs_init()` 将内嵌的 newc 归档展开成 ramfs 目录树，注册控制台设备。探测到启动盘时，它读取 ext2 根 inode，并将它接到 ramfs 的 `/disk`。路径查找经过这个挂载点后使用 ext2 的目录操作，`/disk/..` 返回 ramfs 根。`/init` 在进入 shell 前需要执行 `/disk/bin/child` 并回收其退出状态。`make run` 默认挂载构建生成的 `build/disk.ext2`。[根文件系统初始化](../init/rootfs.c) · [用户态启动过程](../user/init.S)
 
 | 路径 | 来源和用途 |
 |---|---|
@@ -49,4 +49,4 @@ RISC-V 平台从设备树收集启用的 virtio-mmio 窗口，驱动选取第一
 
 宿主机使用 `mke2fs`、`debugfs` 和 `e2fsck` 生成并校验 2 MiB 镜像，固定块大小、inode 数量和大小、UUID、时间戳及文件系统特性。测试文件 `/disk/share/probe/pattern` 长 17 KiB 加 37 字节，内核自测按已知字节模式校验跨直接块和一级间接块的读取，并检查短读、EOF、只读错误和损坏目录项。[镜像生成脚本](../tools/mkext2.py) · [ext2 自测](../tests/test_ext2.c)
 
-`make test` 用同一个自测内核分别启动两张盘。每次均核对磁盘子进程的 PID、执行路径和父进程回收的状态。更换磁盘后父进程观察到的退出码由 42 变为 73。随后从串口给 shell 发送命令，检查前台 `echo` 的输出、错误命令后的恢复，以及 `cat` 读到修正行并在空行首按 Ctrl-D 后返回提示符。[串口验收脚本](../tests/test_uart_irq.py)
+`make test` 用同一个自测内核分别启动两张盘。每次均核对磁盘子进程的 PID、执行路径和父进程回收的状态。更换磁盘后父进程观察到的退出码由 42 变为 73。串口测试还覆盖前台命令、`cat` 的行编辑和 Ctrl-D、管道两端的退出、重定向截断和读回，以及出错后重新显示提示符。[串口验收脚本](../tests/test_uart_irq.py)
