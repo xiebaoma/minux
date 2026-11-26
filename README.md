@@ -2,7 +2,7 @@
 
 Minux 是一个面向 RISC-V 64 的类 Unix 宏内核。它以 Linux 的内核架构为参照，在保持代码精简、可读的前提下，提供与 Linux 兼容的系统调用接口。
 
-> **v0.8 已跑通第一个使用 Minux libc 的 C 程序。** initramfs 中的 `/init` 派生子进程执行 `/bin/hello`。随后继续运行 v0.7 的 ext2 磁盘程序。
+> **v0.8 已有两个使用 Minux libc 的基础命令。** initramfs 中的 `/bin/echo` 用空格分隔参数，并在末尾换行；`/bin/cat` 按参数顺序逐字节输出文件内容。运行 `make test` 会执行两个命令，核对输出和退出码。
 
 ## 设计目标
 
@@ -80,7 +80,7 @@ init/                  通用初始化（start_kernel）
 kernel/                核心子系统（printk、panic、任务与调度）
 lib/                   通用库函数（string、vsprintf）
 mm/                    启动内存表、buddy、slab、虚拟地址空间管理
-user/                  /init、/bin/hello（启动归档）和 /disk/bin/child（ext2）
+user/                  /init、hello、echo、cat（启动归档）和 /disk/bin/child（ext2）
   libc/                用户态头文件、RISC-V 启动入口和系统调用封装
 tests/                 内核自测和 QEMU 串口集成测试
 docs/                  文件系统、内存管理、调度、FDT、异常与中断设计文档及路线图

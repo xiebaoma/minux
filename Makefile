@@ -25,7 +25,7 @@ FREESTANDING_CFLAGS := -std=gnu11 -Wall -Wextra -O2 -g -mabi=lp64 -mcmodel=medan
            -ffreestanding -fno-builtin -nostdlib \
            -fno-stack-protector -fno-pie -fno-omit-frame-pointer -MMD -MP
 CFLAGS := $(FREESTANDING_CFLAGS) -march=rv64imac_zicsr_zifencei -Iinclude -I$(ARCH)/include
-USER_CFLAGS := $(FREESTANDING_CFLAGS) -march=rv64imac -nostdinc -Iuser/libc/include
+USER_CFLAGS := $(FREESTANDING_CFLAGS) -march=rv64imac -nostdinc -Iuser/libc/include -Iinclude/uapi
 # 分页前按物理地址执行高地址链接的代码，保留 PC 相对寻址。
 LDFLAGS := -T $(ARCH)/kernel.ld -nostdlib --no-relax
 
@@ -87,10 +87,11 @@ $(BUILD)/user/%.elf: $(BUILD)/user/%.o $(ARCH)/user.ld
 
 # 只打包清单中的文件；先写临时文件，避免失败后复用半个归档。
 ROOTDIR := $(BUILD)/rootfs
-ROOT_FILES := init bin/hello
+USER_COMMANDS := hello echo cat
+ROOT_FILES := init $(addprefix bin/,$(USER_COMMANDS))
 ROOT_DIRS := bin tmp dev disk
 ifeq ($(TEST),1)
-ROOT_FILES += test/truncated test/pipes
+ROOT_FILES += test/truncated test/pipes test/commands
 ROOT_DIRS += test
 endif
 
@@ -101,17 +102,23 @@ $(ROOTDIR)/init: $(BUILD)/user/init.elf
 USER_LIBDIR := $(BUILD)/user/libc
 USER_CRT := $(USER_LIBDIR)/$(ARCH)/crt0.o
 USER_SYSCALLS := $(USER_LIBDIR)/$(ARCH)/syscalls.o
-HELLO_OBJ := $(BUILD)/user/hello.o
+USER_OBJS := $(addprefix $(BUILD)/user/,$(addsuffix .o,$(USER_COMMANDS)))
+LIBC_OBJS := $(USER_SYSCALLS) $(USER_LIBDIR)/string.o
 
-$(HELLO_OBJ) $(USER_CRT) $(USER_SYSCALLS): CFLAGS := $(USER_CFLAGS)
+$(USER_OBJS) $(USER_CRT) $(LIBC_OBJS) $(BUILD)/tests/user/commands.o: CFLAGS := $(USER_CFLAGS)
 $(USER_SYSCALLS): CPPFLAGS += -I$(ARCH)/include
 
-$(USER_LIBDIR)/libc.a: $(USER_SYSCALLS)
+$(USER_LIBDIR)/libc.a: $(LIBC_OBJS)
 	$(AR) rcs $@ $^
 
-$(ROOTDIR)/bin/hello: $(USER_CRT) $(HELLO_OBJ) $(USER_LIBDIR)/libc.a $(ARCH)/user.ld
+$(ROOTDIR)/bin/%: $(BUILD)/user/%.o $(USER_CRT) $(USER_LIBDIR)/libc.a $(ARCH)/user.ld
 	@mkdir -p $(dir $@)
-	$(LD) -T $(ARCH)/user.ld --no-relax -s -o $@ $(filter %.o %.a,$^)
+	$(LD) -T $(ARCH)/user.ld --no-relax -s -o $@ $(USER_CRT) $< $(USER_LIBDIR)/libc.a
+
+$(BUILD)/tests/user/commands.o: CPPFLAGS += -I$(ARCH)/include -idirafter include
+$(ROOTDIR)/test/commands: $(BUILD)/tests/user/commands.o $(USER_CRT) $(USER_LIBDIR)/libc.a $(ARCH)/user.ld
+	@mkdir -p $(dir $@)
+	$(LD) -T $(ARCH)/user.ld --no-relax -s -o $@ $(USER_CRT) $< $(USER_LIBDIR)/libc.a
 
 $(ROOTDIR)/test/pipes: $(BUILD)/tests/user/pipe.o $(ARCH)/user.ld
 	@mkdir -p $(dir $@)
@@ -152,5 +159,5 @@ clean:
 	rm -rf $(BUILD)
 
 -include $(OBJS:.o=.d) $(BUILD)/user/init.d $(BUILD)/user/child.d $(BUILD)/user/child-alt.d $(BUILD)/tests/user/pipe.d
--include $(HELLO_OBJ:.o=.d) $(USER_CRT:.o=.d) $(USER_SYSCALLS:.o=.d)
+-include $(USER_OBJS:.o=.d) $(USER_CRT:.o=.d) $(LIBC_OBJS:.o=.d) $(BUILD)/tests/user/commands.d
 .SECONDARY: $(BUILD)/user/init.o $(BUILD)/user/child.o

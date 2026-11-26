@@ -196,20 +196,28 @@ wait_probe_pipes:
     lw      a0, 4(sp)
     ecall
     bnez    a0, .Lfail
+    la      s0, .Lpipes
+    j       .Lrun_test
+
+    .globl wait_probe_commands
+wait_probe_commands:
+    addi    sp, sp, -16
+    la      s0, .Lcommands
+.Lrun_test:
     li      a0, SIGCHLD
     li      a1, 0
     li      a7, __NR_clone
     ecall
     bltz    a0, .Lfail
-    beqz    a0, .Lexec_pipes
+    beqz    a0, .Lexec_test
     mv      s0, a0
     wait4   s0, sp
     bne     a0, s0, .Lfail
     lw      t0, 0(sp)
     bnez    t0, .Lfail
     j       .Ldone
-.Lexec_pipes:
-    la      a0, .Lpipes
+.Lexec_test:
+    mv      a0, s0
     li      a1, 0
     li      a2, 0
     li      a7, __NR_execve
@@ -506,6 +514,7 @@ wait_probe_fault:
 .Ltruncated: .asciz "/test/truncated"
 .Lmissing: .asciz "/no-such-file"
 .Lpipes: .asciz "/test/pipes"
+.Lcommands: .asciz "/test/commands"
 .Lconsole: .asciz "/dev/console"
 .Linit_path: .asciz "/init"
 .Lchild_path: .asciz "/disk/bin/child"
