@@ -22,7 +22,7 @@ U 模式的 `ecall` 进入 RISC-V 系统调用分发。Linux RV64 ABI 使用 `a7
 
 ## 周期性定时器
 
-启动代码从 DTB 的 `/cpus/timebase-frequency` 取得 `time` 计数器频率。`timer_init()` 按该频率计算每秒 10 次的间隔，通过 SBI TIME 扩展设置首次绝对截止时间，然后分别打开 `sie.STIE` 和 `sstatus.SIE`。每次定时器中断都重新设置下次截止时间并增加 tick 计数。普通内核上下文每秒输出一次计数；自测镜像观察到两次输出后关机。
+启动代码从 DTB 的 `/cpus/timebase-frequency` 取得 `time` 计数器频率。`timer_init()` 按该频率计算每秒 10 次的间隔，通过 SBI TIME 扩展设置首次绝对截止时间，然后分别打开 `sie.STIE` 和 `sstatus.SIE`。每次定时器中断都重新设置下次截止时间并增加 tick 计数。自测镜像在 idle 循环中每秒输出一次计数，两次输出后关机。普通镜像的周期性计数输出已关闭，方便串口交互。
 
 从 v0.5 开始，定时器中断更新计数后还会派发就绪线程。被切出的线程重新运行时，从自己内核栈上的 trap 现场恢复。见 [内核线程与调度](SCHED.md)。
 
@@ -32,13 +32,13 @@ SBI TIME 的参数是绝对时间，且设置未来的截止时间会清除待�
 
 `virt_probe_devices()` 再次遍历 DTB，读取 `/soc` 下的 PLIC 和 `ns16550a` UART 地址、UART 中断号以及 PLIC 的 S 模式上下文。当前只支持 QEMU `virt` 的单 hart 配置：`/soc/ranges` 必须为空，PLIC 的 `interrupts-extended` 每项按一个 phandle cell 加一个中断 cell 解析。探测时还会确认 UART 的 `interrupt-parent` 指向该 PLIC。当前 QEMU 配置得到 PLIC `0x0c000000`、S 上下文 1、UART `0x10000000`、IRQ 10。
 
-PLIC 为 UART IRQ 设置正优先级、打开 S 上下文的 enable 位，并把阈值设为 0。UART 保留 OpenSBI 配置的波特率，开启接收 FIFO 与接收数据中断；最后打开 `sie.SEIE`。收到字符时，UART 向 PLIC 请求中断，CPU 进入 `scause=9` 的 trap。处理代码从 PLIC 认领 IRQ，读空 UART 接收 FIFO 并逐字节回显，再向 PLIC 写回同一 IRQ 号表示完成。PLIC 寄存器布局和认领流程见 [PLIC 规范](https://docs.riscv.org/reference/hardware/plic/_attachments/riscv-plic.pdf)。
+PLIC 为 UART IRQ 设置正优先级、打开 S 上下文的 enable 位，并把阈值设为 0。UART 保留 OpenSBI 配置的波特率，开启接收 FIFO 与接收数据中断；最后打开 `sie.SEIE`。收到字符时，UART 向 PLIC 请求中断，CPU 进入 `scause=9` 的 trap。处理代码从 PLIC 认领 IRQ，读空 UART 接收 FIFO 并逐字节调用 `tty_receive_char()`，再向 PLIC 写回同一 IRQ 号表示完成。PLIC 寄存器布局和认领流程见 [PLIC 规范](https://docs.riscv.org/reference/hardware/plic/_attachments/riscv-plic.pdf)。
 
-此实现只处理接收中断，回显时轮询发送寄存器。日志输出仍经 SBI 早期控制台；输入缓冲、TTY 行规程和并发控制留给后续里程碑。
+通用 TTY 代码负责输入缓冲、行编辑、回显和唤醒读者。回显和日志都通过早期控制台输出。[串口按行输入](FS.md#串口按行输入)
 
 ## 本阶段验证
 
 - 正常镜像与自测镜像均成功构建；QEMU 自测结果为 `143/143 passed, all OK`。
 - 用未加入仓库的临时镜像执行非法指令，QEMU 输出 `unhandled exception: cause=2` 和故障地址，验证了 trap 入口及异常诊断路径。
 - QEMU 自测镜像随后输出 `timer: 10 ticks`、`timer: 20 ticks` 并正常关机，验证了重复设置定时器和中断返回路径。
-- `make test` 使用无本地回显的串口管道向 QEMU 输入 `IRQ-one`，等待一次定时器报告后再输入 `IRQ-two\r`。脚本确认两段文本各回显一次、回车转换为 `\r\n`、随后收到 `timer: 20 ticks`、自测全部通过且 QEMU 正常关机；超时或断言失败会使命令返回非零退出码。
+- `make test` 通过无本地回显的串口管道发送按键，在两次输入之间等待定时器报告。脚本分别核对即时回显、退格序列和用户态 `cat` 输出的修正行，再检查两种 Ctrl-D 行为以及定时器关机。

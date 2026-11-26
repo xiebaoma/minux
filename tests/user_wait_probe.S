@@ -120,11 +120,11 @@ wait_probe_exec:
     bnez    t0, .Lfail
     j       .Ldone
 .Lexec_init:
-    /* 先占用第一个 fd，验证 /init 使用实际返回的描述符。 */
+    /* 自测在 UART 启用前运行，以空文件作为 stdin 使 cat 读到 EOF。 */
     li      a0, AT_FDCWD
-    la      a1, .Lchild_path
-    li      a2, O_RDONLY
-    li      a3, 0
+    la      a1, .Lempty_stdin
+    li      a2, O_RDONLY|O_CREAT
+    li      a3, 0600
     li      a7, __NR_openat
     ecall
     bnez    a0, .Lfail
@@ -134,6 +134,13 @@ wait_probe_exec:
     li      a7, __NR_openat
     ecall
     li      t0, 1
+    bne     a0, t0, .Lfail
+    li      a0, AT_FDCWD
+    la      a1, .Lconsole
+    li      a2, O_WRONLY
+    li      a7, __NR_openat
+    ecall
+    li      t0, 2
     bne     a0, t0, .Lfail
     la      a0, .Linit_path
     sd      a0, 0(sp)
@@ -286,6 +293,42 @@ wait_probe_exec_errors:
     li      t0, \result
     bne     a0, t0, .Lfail
     .endm
+
+    .macro tty_read dst, count, result
+    li      a0, 0
+    mv      a1, \dst
+    li      a2, \count
+    li      a7, __NR_read
+    ecall
+    expect_result \result
+    .endm
+
+    .globl wait_probe_tty
+wait_probe_tty:
+    addi    sp, sp, -16
+    fd_open .Lconsole, O_RDONLY
+    expect_result 0
+    /* 输入队列已有 "abc^D"、空行、空 EOF 和 "Z\n"。 */
+    tty_read zero, 1, -EFAULT
+    tty_read sp, 2, 2
+    lhu     t1, 0(sp)
+    li      t0, 0x6261
+    bne     t0, t1, .Lfail
+    tty_read sp, 1, 1           /* 返回 c 的同一次 read 消耗行尾 ^D。 */
+    lbu     t1, 0(sp)
+    li      t0, 'c'
+    bne     t0, t1, .Lfail
+    tty_read sp, 8, 1
+    lbu     t1, 0(sp)
+    li      t0, 10
+    bne     t0, t1, .Lfail
+    tty_read sp, 0, 0
+    tty_read sp, 8, 0
+    tty_read sp, 8, 2
+    lhu     t1, 0(sp)
+    li      t0, 0x0a5a
+    bne     t0, t1, .Lfail
+    j       .Ldone
 
     .globl wait_probe_files
 wait_probe_files:
@@ -516,6 +559,7 @@ wait_probe_fault:
 .Lpipes: .asciz "/test/pipes"
 .Lcommands: .asciz "/test/commands"
 .Lconsole: .asciz "/dev/console"
+.Lempty_stdin: .asciz "/tmp/empty-stdin"
 .Linit_path: .asciz "/init"
 .Lchild_path: .asciz "/disk/bin/child"
 wait_probe_end:

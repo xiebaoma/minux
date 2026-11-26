@@ -16,9 +16,10 @@ void test_rootfs(void)
 
 	check(!vfs_open_flags(root_inode, "/dev/console", O_WRONLY, &file) &&
 	      vfs_write_at(&file, 0, "x", 1) == -ESPIPE &&
-	      vfs_open_flags(root_inode, "/dev/console", O_RDONLY, &file) == -EACCES &&
-	      vfs_open_flags(root_inode, "/dev/console", O_RDWR, &file) == -EACCES,
-	      "console: open a write-only stream by path");
+	      !vfs_open_flags(root_inode, "/dev/console", O_RDONLY, &file) &&
+	      !vfs_open_flags(root_inode, "/dev/console", O_RDWR, &file) &&
+	      file.stream && file.stream->read && file.stream->write,
+	      "console: open the TTY for input, output or both");
 	check(!vfs_lookup(root_inode, "/../../", &node) && node == root_inode,
 	      "vfs: .. at root stays at root");
 	check(vfs_open(root_inode, "/bin", &file) == -EISDIR &&

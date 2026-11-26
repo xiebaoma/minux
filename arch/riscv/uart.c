@@ -1,9 +1,9 @@
 #include <asm/page.h>
 #include <asm/plic.h>
 #include <asm/uart.h>
+#include <minux/console.h>
 
 #define UART_RBR 0 /* 读：接收字符；写：发送字符 THR。 */
-#define UART_THR 0
 #define UART_IER 1
 #define UART_FCR 2
 #define UART_LCR 3
@@ -15,7 +15,6 @@
 #define UART_LCR_DLAB 0x80
 #define UART_MCR_OUT2 0x08
 #define UART_LSR_DR   0x01
-#define UART_LSR_THRE 0x20
 #define SIE_SEIE      (1UL << 9)
 
 static uintptr_t uart_base;
@@ -29,14 +28,6 @@ static u8 uart_read(u32 offset)
 static void uart_write(u32 offset, u8 value)
 {
 	*(volatile u8 *)(uart_base + offset) = value;
-}
-
-static void uart_putc(u8 ch)
-{
-	/* 只发送少量回显字符；等发送寄存器空闲后再写入。 */
-	while (!(uart_read(UART_LSR) & UART_LSR_THRE))
-		;
-	uart_write(UART_THR, ch);
 }
 
 void uart_init(const struct virt_irq_devices *devices)
@@ -65,11 +56,6 @@ u32 uart_irq_number(void)
 void uart_handle_interrupt(void)
 {
 	/* 一次中断读空接收 FIFO，避免只读一个字符就反复进入 trap。 */
-	while (uart_read(UART_LSR) & UART_LSR_DR) {
-		u8 ch = uart_read(UART_RBR);
-
-		if (ch == '\r')
-			uart_putc('\r');
-		uart_putc(ch == '\r' ? '\n' : ch);
-	}
+	while (uart_read(UART_LSR) & UART_LSR_DR)
+		tty_receive_char(uart_read(UART_RBR));
 }

@@ -2,7 +2,7 @@
 
 Minux 是一个面向 RISC-V 64 的类 Unix 宏内核。它以 Linux 的内核架构为参照，在保持代码精简、可读的前提下，提供与 Linux 兼容的系统调用接口。
 
-> **v0.8 已有两个使用 Minux libc 的基础命令。** initramfs 中的 `/bin/echo` 用空格分隔参数，并在末尾换行；`/bin/cat` 按参数顺序逐字节输出文件内容。运行 `make test` 会执行两个命令，核对输出和退出码。
+> **v0.8 已支持串口按行输入。** initramfs 中的 `/bin/echo` 和 `/bin/cat` 使用 Minux 自己的 libc。启动后，`/init` 执行无参数的 `cat`，可以直接在 QEMU 串口编辑一行并按回车，让 `cat` 从标准输入读回这行文字。
 
 ## 设计目标
 
@@ -34,12 +34,12 @@ brew install qemu riscv64-elf-gcc python e2fsprogs
 |---|---|
 | `make` | 构建内核 `build/minux.elf` 和只读 ext2 镜像 `build/disk.ext2` |
 | `make run` | 在 QEMU 中启动（按 `Ctrl-A X` 退出） |
-| `make test` | 用同一内核分别启动两张盘，每次运行全部内核自测，并核对磁盘程序退出值、串口回显和关机 |
+| `make test` | 用同一内核分别启动两张盘，每次运行全部内核自测，并核对磁盘程序退出值、串口回显、用户态实际读到的内容和关机 |
 | `make debug` | 启动 QEMU 并在第一条指令前暂停，GDB 服务监听 `localhost:1234` |
 | `make dump` | 生成反汇编文件 `build/minux.asm` |
 | `make clean` | 清理构建产物 |
 
-普通 `make run` 的串口日志包含以下记录，时钟日志可能穿插其间。Minux 自己的 `_start` 从初始栈取出 `argc`、`argv`、`envp` 交给 `main`。`hello` 核对环境变量 `MINUX=1`，通过 `write` 输出参数中的问候语。返回值 37 经 `_exit` 交给父进程。
+普通 `make run` 的串口日志包含以下记录。Minux 自己的 `_start` 从初始栈取出 `argc`、`argv`、`envp` 交给 `main`。`hello` 核对环境变量 `MINUX=1`，通过 `write` 输出参数中的问候语。返回值 37 经 `_exit` 交给父进程。
 
 ```text
 user task 1: start /init
@@ -51,12 +51,15 @@ user task 3: exec /disk/bin/child
 user task 3: exit 42
 init: reaped disk child, status 42
 minux: hello through pipe
-user task 1: exit 0
+tty: type a line; Ctrl-D on an empty line exits cat
+user task 1: exec /bin/cat
 ```
+
+输入 `minuz`，按一次退格，再输入 `x`。此时屏幕上的输入应为 `minux`。按回车后，下一行是 `cat` 从 fd 0 读到并输出的 `minux`。在空行首按 Ctrl-D，串口会显示 `user task 1: exit 0`。在已有文字后按 Ctrl-D，则会把这段文字交给 `cat`，不附加换行。
 
 ## 复现 v0.7 换盘验收
 
-`make test` 依次用默认盘和替换盘启动同一个自测内核，预期父进程分别报告 `status 42` 和 `status 73`。两个镜像来自同一个生成脚本，只有磁盘程序的退出码不同。要在普通内核上手动观察，先运行 `make run`，看到父进程退出后按 `Ctrl-A X` 退出 QEMU，再执行以下命令。
+`make test` 依次用默认盘和替换盘启动同一个自测内核，预期父进程分别报告 `status 42` 和 `status 73`。两个镜像来自同一个生成脚本，只有磁盘程序的退出码不同。要在普通内核上手动观察，先运行 `make run`，看到父进程报告磁盘子程序的退出码后按 `Ctrl-A X` 退出 QEMU，再执行以下命令。
 
 ```sh
 make run DISK=build/disk-alt.ext2

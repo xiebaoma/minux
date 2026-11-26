@@ -1,4 +1,5 @@
 #include <minux/buddy.h>
+#include <minux/console.h>
 #include <minux/irq.h>
 #include <minux/mm.h>
 #include <minux/page.h>
@@ -20,6 +21,7 @@ extern const char wait_probe_child[], wait_probe_fault[], wait_probe_fork[], wai
 
 extern const char wait_probe_exec[], wait_probe_exec_errors[], wait_probe_files[], wait_probe_pipes[];
 extern const char wait_probe_commands[];
+extern const char wait_probe_tty[];
 
 static struct {
 	unsigned int blocked_parents;
@@ -141,6 +143,8 @@ void test_user_wait(void)
 		  "pipe: rollback, blocking I/O, wrap-around, wakeup on peer close and EOF" },
 		{ wait_probe_commands, 0, 0, 0,
 		  "commands: echo arguments, cat binary data, EOF and exit status" },
+		{ wait_probe_tty, 0, 0, 0,
+		  "tty: retain data on EFAULT, split reads and consume EOF once" },
 		{ wait_probe_files, 0, 0, 0,
 		  "fd: access modes, user faults, short I/O, EMFILE, slot reuse and exit cleanup" },
 		{ wait_probe_exec_errors, 0, 0, 0,
@@ -176,6 +180,11 @@ void test_user_wait(void)
 		parent = create_wait_probe(cases[i].entry);
 		check(parent != NULL, "wait4: create the user parent probe");
 		if (parent) {
+			if (cases[i].entry == wait_probe_tty) {
+				const char input[] = "abc\004\b\n\004Z\n";
+				for (size_t j = 0; j < sizeof(input) - 1; j++)
+					tty_receive_char(input[j]);
+			}
 			task_idle_once();
 			/* 每一轮 wait4 都可能由 idle 回收子进程后才唤醒父进程。 */
 			for (unsigned int n = 0; n < FORK_PROBE_ROUNDS; n++) {

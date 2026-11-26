@@ -8,9 +8,8 @@ import sys
 import time
 
 
-FIRST = b"IRQ-one"
-SECOND = b"IRQ-two"
-SECOND_ECHO = SECOND + b"\r\n"
+TYPED = b"IRQ-onxy"
+EDITED_LINE = b"IRQ-one\r\n"
 TIMEOUT = 20
 
 
@@ -53,12 +52,14 @@ def main():
             raise RuntimeError(f"/init did not exec {path!r} in a child")
         return match[1], end
 
+    def send(keys):
+        proc.stdin.write(keys)
+        proc.stdin.flush()
+
     try:
         # stdin is a pipe, so any echoed bytes must come from the guest UART.
         # Wait for complete log lines so the echo cannot interrupt their output.
         ready = wait_for(b"\r\n", wait_for(b"timer: 10 Hz, timebase: "))
-        # /init may resume after the timer banner. Let its exit log finish before
-        # injecting characters so kernel output cannot split the UART echo.
         init = re.search(rb"user task (\d+): start /init\r\n", output)
         if not init:
             raise RuntimeError("missing /init launch")
@@ -70,17 +71,21 @@ def main():
         child_done = wait_for(b"user task " + disk_pid + b": exit " + expected + b"\r\n", disk_start)
         reaped = wait_for(b"init: reaped disk child, status " + expected + b"\r\n", child_done)
         console_done = wait_for(b"minux: hello through pipe\r\n", reaped)
-        init_done = wait_for(b"user task " + init[1] + b": exit 0\r\n", console_done)
-        ready = max(ready, init_done)
-        proc.stdin.write(FIRST)
-        proc.stdin.flush()
-        first_end = wait_for(FIRST, ready)
-
-        # A timer interrupt between inputs proves the first IRQ handler returned.
+        cat_start = wait_for(b"user task " + init[1] + b": exec /bin/cat\r\n", console_done)
+        send(TYPED)
+        first_end = wait_for(TYPED, max(ready, cat_start))
+        # The unfinished line is echoed immediately, while cat stays blocked.
         tick_end = wait_for(b"timer: 10 ticks\r\n", first_end)
-        proc.stdin.write(SECOND + b"\r")
-        proc.stdin.flush()
-        wait_for(SECOND_ECHO, tick_end)
+        send(b"\x7f\be\r")
+        echoed = wait_for(b"\b \b\b \be\r\n", tick_end)
+        delivered = wait_for(EDITED_LINE, echoed)
+        # Nonempty Ctrl-D submits bytes without a newline; the next read waits again.
+        send(b"tail\x04")
+        partial = wait_for(b"tailtail", delivered)
+        send(b"IRQ-two\n")
+        complete = wait_for(b"IRQ-two\r\nIRQ-two\r\n", partial)
+        send(b"\x04")
+        wait_for(b"user task " + init[1] + b": exit 0\r\n", complete)
 
         while read_chunk():
             pass
@@ -89,8 +94,8 @@ def main():
         summary = re.search(rb"==== (\d+)/(\d+) passed, all OK ====", output)
         if not summary or summary.group(1) != summary.group(2):
             raise RuntimeError("kernel selftests did not all pass")
-        if output.count(FIRST) != 1 or output.count(SECOND_ECHO) != 1:
-            raise RuntimeError("UART input was not echoed exactly once")
+        if output.count(TYPED) != 1 or output.count(EDITED_LINE) != 1:
+            raise RuntimeError("unexpected TTY echo or edited line")
         if b"timer: 20 ticks" not in output:
             raise RuntimeError("timer did not continue after UART interrupts")
         if proc.returncode != 0:
@@ -108,7 +113,7 @@ def main():
     print("/tmp ramfs I/O, independent opens and shared fd across fork/exec passed")
     print(f"/init reaped /disk/bin/child with expected exit code {expected.decode()}")
     print("anonymous pipe, EOF and stdout via /dev/console passed")
-    print("UART/PLIC integration test passed")
+    print("UART/PLIC, canonical stdin, echo, erase and Ctrl-D integration test passed")
 
 
 if __name__ == "__main__":

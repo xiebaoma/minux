@@ -114,29 +114,32 @@ int start_init_process(void)
 	const char *const argv[] = { "/init", NULL }, *const envp[] = { NULL };
 	struct exec_image img;
 	struct task_struct *task;
+	struct fdtable files = {0};
 	int err = prepare_image(argv[0], argv, envp, &img);
 
 	if (err)
 		return err;
-	struct file *output;
-	err = file_open("/dev/console", O_WRONLY, &output);
-	if (err) {
-		mm_destroy(img.mm);
-		return err;
+	for (int fd = 0; fd < 3; fd++) {
+		err = file_open("/dev/console", fd == 0 ? O_RDONLY : O_WRONLY, &files.slots[fd]);
+		if (err)
+			goto fail;
 	}
-	/* 新任务首次派发前装好 stdout。fork/exec 随后沿用普通 fd 生命周期。 */
+	/* 首次派发前移交 stdin/stdout/stderr，此后沿用普通 fd 生命周期。 */
 	unsigned long irq = arch_local_irq_save();
 	task = task_create_user(img.mm, img.pc, img.sp);
 	if (!task) {
 		arch_local_irq_restore(irq);
-		file_put(output);
-		mm_destroy(img.mm);
-		return -ENOMEM;
+		err = -ENOMEM;
+		goto fail;
 	}
-	task->files.slots[1] = output;
+	task->files = files;
 	pr_info("user task %d: start /init\n", task->pid);
 	arch_local_irq_restore(irq);
 	return 0;
+fail:
+	fdtable_release(&files);
+	mm_destroy(img.mm);
+	return err;
 }
 
 long sys_execve(uintptr_t filename, uintptr_t argv, uintptr_t envp, struct pt_regs *regs)

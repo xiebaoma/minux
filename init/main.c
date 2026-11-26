@@ -307,7 +307,8 @@ static void start_kernel_mapped(void)
 	pr_info("timer: %u Hz, timebase: %u Hz\n",
 		TIMER_HZ, timebase_frequency);
 
-	/* 在 idle 循环中每秒报告一次 tick 计数。 */
+#ifdef CONFIG_SELFTEST
+	/* 自测通过周期日志确认串口中断结束后时钟仍在运行。 */
 	for (unsigned long reported = 0;;) {
 		unsigned long current;
 
@@ -317,10 +318,12 @@ static void start_kernel_mapped(void)
 			continue;
 		reported = current;
 		pr_info("timer: %lu ticks\n", current);
-#ifdef CONFIG_SELFTEST
 		/* 自测镜像观察两次周期报告后关机，便于 make test 完成。 */
 		if (current >= 2 * TIMER_HZ)
 			sbi_shutdown();
-#endif
 	}
+#else
+	for (;;)
+		task_idle_once();
+#endif
 }
