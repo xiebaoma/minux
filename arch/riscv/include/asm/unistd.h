@@ -2,6 +2,7 @@
 #define _ASM_RISCV_UNISTD_H
 
 /* Linux RV64 系统调用编号。 */
+#define __NR_dup3   24
 #define __NR_openat 56
 #define __NR_close  57
 #define __NR_pipe2  59

@@ -9,6 +9,7 @@
 
 struct pt_regs;
 
+long sys_dup3(int oldfd, int newfd, int flags);
 long sys_openat(int dirfd, uintptr_t pathname, int flags, unsigned int mode);
 long sys_pipe2(uintptr_t pipefd, int flags);
 long sys_read(int fd, uintptr_t buf, size_t count);

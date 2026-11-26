@@ -35,6 +35,23 @@ close:
     ret
     .size close, . - close
 
+    .globl dup3
+    .type dup3, @function
+dup3:
+    li      a7, __NR_dup3
+    ecall
+    ret
+    .size dup3, . - dup3
+
+    .globl pipe
+    .type pipe, @function
+pipe:
+    li      a1, 0               /* pipe2(fds, 0) */
+    li      a7, __NR_pipe2
+    ecall
+    ret
+    .size pipe, . - pipe
+
     .globl write
     .type write, @function
 write:

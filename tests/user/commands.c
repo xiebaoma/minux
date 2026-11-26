@@ -38,7 +38,7 @@ static void check_command(char *const argv[], int expected_status,
 int main(void)
 {
 	/* /test/truncated 的 4 字节后接含 NUL 的文件，最后一次 read 只返回 1 字节。 */
-	char joined[4 + 1537];
+	static char joined[4 + 2 * 4096 + 1]; /* 超过管道容量，要求读写两端同时运行。 */
 	char *data = joined + 4;
 	size_t length = sizeof(joined) - 4;
 	for (size_t i = 0; i < 4; i++)
@@ -63,5 +63,16 @@ int main(void)
 	check_command(cat, 0, joined, sizeof(joined));
 	check_command(missing, 1, data, length);
 	check_command(stdin_cat, 0, "\177ELF", 4);
+
+	const char script[] = "/bin/cat</tmp/binary|/bin/cat>/tmp/piped\n/bin/cat</tmp/piped\n";
+	fd = open("/tmp/script", O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	REQUIRE(fd >= 0 && write(fd, script, sizeof(script) - 1) == sizeof(script) - 1);
+	REQUIRE(close(fd) == 0 && close(STDIN_FILENO) == 0);
+	REQUIRE(open("/tmp/script", O_RDONLY) == STDIN_FILENO);
+	fd = open("/tmp/prompts", O_WRONLY | O_CREAT, 0600);
+	REQUIRE(fd == STDOUT_FILENO && dup3(fd, STDERR_FILENO, 0) == STDERR_FILENO);
+	REQUIRE(close(fd) == 0);
+	char *shell[] = { "/bin/sh", NULL };
+	check_command(shell, 0, data, length);
 	return 0;
 }

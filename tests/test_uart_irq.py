@@ -115,6 +115,34 @@ def main():
         if PROMPT in output[cat_start:cat_exit]:
             raise RuntimeError("shell prompted while cat still owned stdin")
         prompt = wait_for(PROMPT, cat_exit)
+
+        def command_output(command):
+            nonlocal prompt
+            send(command + b"\n")
+            start = wait_for(command + b"\r\n", prompt)
+            prompt = wait_for(PROMPT, start)
+            return bytes(output[start:prompt - len(PROMPT)])
+
+        command_output(b"/bin/echo longer contents >/tmp/out")
+        pipeline = command_output(b"/bin/echo hello | /bin/cat > /tmp/out")
+        pids = []
+        for name in (b"echo", b"cat"):
+            match = re.search(rb"user task (\d+): exec /bin/" + name + rb"\r\n", pipeline)
+            if not match or b"user task " + match[1] + b": exit 0\r\n" not in pipeline:
+                raise RuntimeError(f"pipeline {name!r} did not finish before the prompt")
+            pids.append(match[1])
+        if pids[0] == pids[1] or init[1] in pids or b"hello\r\n" in pipeline:
+            raise RuntimeError("unexpected pipeline processes or output on the console")
+        readback = command_output(b"/bin/cat < /tmp/out")
+        if not re.search(rb": exec /bin/cat\r\nhello\r\nuser task \d+: exit 0\r\n", readback):
+            raise RuntimeError("redirected file did not contain exactly the new line")
+        for command, message in [
+            (b"/bin/echo ignored |", b"sh: missing command"),
+            (b"/bin/echo ignored >", b"sh: missing redirection path"),
+            (b"/bin/cat </tmp/no-such-file | /bin/cat", b"sh: cannot open /tmp/no-such-file"),
+        ]:
+            if message not in command_output(command):
+                raise RuntimeError(f"missing shell diagnostic for {command!r}")
         send(b"\x04")
         wait_for(b"user task " + init[1] + b": exit 0\r\n", prompt)
 
@@ -146,6 +174,7 @@ def main():
     print("anonymous pipe, EOF and stdout via /dev/console passed")
     print("UART/PLIC, canonical stdin, echo, erase and Ctrl-D integration test passed")
     print("Shell foreground commands, argument parsing and recovery after errors passed")
+    print("Shell pipeline, input/output redirection, truncation and error recovery passed")
 
 
 if __name__ == "__main__":

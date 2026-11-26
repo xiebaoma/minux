@@ -9,6 +9,11 @@
 #include <minux/uaccess.h>
 
 /* 每张表只由所属任务修改。不同进程的槽位可引用同一个打开文件。 */
+static void file_get(struct file *file)
+{
+	__atomic_add_fetch(&file->refs, 1, __ATOMIC_RELAXED);
+}
+
 void file_put(struct file *file)
 {
 	if (__atomic_sub_fetch(&file->refs, 1, __ATOMIC_ACQ_REL) == 0) {
@@ -24,7 +29,7 @@ void fdtable_inherit(struct fdtable *child, const struct fdtable *parent)
 		struct file *file = parent->slots[fd];
 
 		if (file)
-			__atomic_add_fetch(&file->refs, 1, __ATOMIC_RELAXED);
+			file_get(file);
 		child->slots[fd] = file;
 	}
 }
@@ -44,6 +49,24 @@ static struct file *fd_get_file(int fd)
 	if (fd < 0 || fd >= FD_MAX)
 		return NULL;
 	return task_current()->files.slots[fd];
+}
+
+long sys_dup3(int oldfd, int newfd, int flags)
+{
+	struct file *source = fd_get_file(oldfd);
+	struct fdtable *table = &task_current()->files;
+
+	if (flags || oldfd == newfd)
+		return -EINVAL;
+	if (!source || newfd < 0 || newfd >= FD_MAX)
+		return -EBADF;
+
+	struct file *previous = table->slots[newfd];
+	file_get(source);
+	table->slots[newfd] = source;
+	if (previous)
+		file_put(previous);
+	return newfd;
 }
 
 long sys_close(int fd)

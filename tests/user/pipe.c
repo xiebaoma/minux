@@ -76,6 +76,31 @@ static void test_errors(void)
 
 static unsigned char payload[2 * PIPE_BUF + 173];
 
+static void test_dup3(void)
+{
+	int ends[2];
+	char c;
+	long file = call(__NR_openat, AT_FDCWD, (long)"/init", O_RDONLY, 0);
+	REQUIRE(file == 0 && pipe2(ends, 0) == 0);
+	int alias = ends[1];
+	REQUIRE(call(__NR_dup3, file, file, 0, 0) == -EINVAL);
+	REQUIRE(call(__NR_dup3, file, alias, 1, 0) == -EINVAL);
+	REQUIRE(call(__NR_dup3, FD_MAX, alias, 0, 0) == -EBADF);
+	REQUIRE(call(__NR_dup3, file, -1, 0, 0) == -EBADF);
+	REQUIRE(call(__NR_dup3, file, FD_MAX, 0, 0) == -EBADF);
+	REQUIRE(wr(alias, "x", 1) == 1 && rd(ends[0], &c, 1) == 1 && c == 'x');
+	/* 替换最后一个写端使管道到达 EOF，复制后的文件共享读位置。 */
+	REQUIRE(call(__NR_dup3, file, alias, 0, 0) == alias);
+	REQUIRE(rd(ends[0], &c, 1) == 0);
+	REQUIRE(rd(file, &c, 1) == 1 && c == 0x7f);
+	REQUIRE(rd(alias, &c, 1) == 1 && c == 'E');
+	REQUIRE(call(__NR_dup3, file, alias, 0, 0) == alias);
+	close_fd(file);
+	REQUIRE(rd(alias, &c, 1) == 1 && c == 'L');
+	close_fd(ends[0]);
+	close_fd(alias);
+}
+
 static void test_stream(void)
 {
 	unsigned char buf[317];
@@ -154,6 +179,7 @@ static void test_peer_close(void)
 void _start(void)
 {
 	test_errors();
+	test_dup3();
 	test_stream();
 	test_small_write();
 	test_peer_close();
