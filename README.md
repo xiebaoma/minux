@@ -39,49 +39,6 @@ brew install qemu riscv64-elf-gcc python e2fsprogs
 | `make dump` | 生成反汇编文件 `build/minux.asm` |
 | `make clean` | 清理构建产物 |
 
-普通 `make run` 的串口日志包含以下记录。Minux 自己的 `_start` 从初始栈取出 `argc`、`argv`、`envp` 交给 `main`。`hello` 核对环境变量 `MINUX=1`，通过 `write` 输出参数中的问候语。返回值 37 经 `_exit` 交给父进程。
-
-```text
-user task 1: start /init
-user task 2: exec /bin/hello
-hello from Minux libc
-user task 2: exit 37
-init: reaped /bin/hello, status 37
-user task 3: exec /disk/bin/child
-user task 3: exit 42
-init: reaped disk child, status 42
-minux: hello through pipe
-user task 1: exec /bin/sh
-minux$ /bin/echo hello
-user task 4: exec /bin/echo
-hello
-user task 4: exit 0
-minux$
-```
-
-shell 接受绝对路径，按空格和制表符拆分参数。每行最多 127 字节，每个命令最多 32 个参数（含命令名）。一条前台管道可以连接两个命令，操作符两侧的空格可省略。
-
-## 复现 v0.8 用户环境验收
-
-在同一次启动中依次输入以下两条命令。第一条把 `echo` 的输出经管道交给 `cat`，再写入 `/tmp/out`。第二条从该文件读回一行 `hello`，随后再次显示提示符。`>` 会创建文件或截断已有内容。
-
-```sh
-/bin/echo hello | /bin/cat > /tmp/out
-/bin/cat < /tmp/out
-```
-
-输入不存在的绝对路径时，shell 会报错并返回提示符，可以继续执行下一条命令。输入 `/bin/cat` 启动前台程序，再输入 `minuz`、按退格、输入 `x` 并按回车。`cat` 会输出修正后的 `minux`。在空行首按 Ctrl-D 结束 `cat` 并返回 shell，在空提示符处再按 Ctrl-D 退出 shell。
-
-## 复现 v0.7 换盘验收
-
-`make test` 依次用默认盘和替换盘启动同一个自测内核，预期父进程分别报告 `status 42` 和 `status 73`。两个镜像来自同一个生成脚本，只有磁盘程序的退出码不同。要在普通内核上手动观察，先运行 `make run`，看到父进程报告磁盘子程序的退出码后按 `Ctrl-A X` 退出 QEMU，再执行以下命令。
-
-```sh
-make run DISK=build/disk-alt.ext2
-```
-
-Make 会按需生成替换盘。两次启动均使用 `build/minux.elf`，写入 `/tmp` 的内容只在当次启动有效。[文件系统设计与测试范围](docs/FS.md)
-
 ## 目录结构
 
 ```
