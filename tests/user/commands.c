@@ -1,8 +1,67 @@
+#include <errno.h>
 #include <fcntl.h>
+#include <string.h>
+#include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #define REQUIRE(expr) do { if (!(expr)) _exit(__LINE__); } while (0)
+
+static void check_libc_abi(void)
+{
+	char *args[] = { "/no-such-program", NULL };
+	char c;
+
+	errno = 777;
+	REQUIRE(getpid() > 0 && errno == 777);
+
+	REQUIRE(open("/no-such-file", O_RDONLY) == -1 && errno == ENOENT);
+	errno = 777;
+	int fd = open("/test/truncated", O_RDONLY);
+	REQUIRE(fd >= 0 && errno == 777);
+
+	REQUIRE(read(-1, &c, 1) == -1 && errno == EBADF);
+	REQUIRE(read(fd, NULL, 1) == -1 && errno == EFAULT);
+	REQUIRE(write(fd, "x", 1) == -1 && errno == EBADF);
+	REQUIRE(dup3(fd, fd, 0) == -1 && errno == EINVAL);
+
+	errno = 777;
+	REQUIRE(close(fd) == 0 && errno == 777);
+	REQUIRE(close(fd) == -1 && errno == EBADF);
+
+	REQUIRE(pipe(NULL) == -1 && errno == EFAULT);
+	REQUIRE(waitpid(-1, NULL, 0) == -1 && errno == ECHILD);
+	REQUIRE(waitpid(-2, NULL, 0) == -1 && errno == EINVAL);
+	REQUIRE(execve(args[0], args, NULL) == -1 && errno == ENOENT);
+
+	REQUIRE(mmap(NULL, 0, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) == MAP_FAILED &&
+		errno == EINVAL);
+	REQUIRE(mmap(NULL, (size_t)-1, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) == MAP_FAILED &&
+		errno == ENOMEM);
+	REQUIRE(munmap((void *)1, 4096) == -1 && errno == EINVAL);
+
+	errno = 555;
+	unsigned char *pages = mmap(NULL, 3 * 4096, PROT_READ | PROT_WRITE,
+				    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	REQUIRE(pages != MAP_FAILED && errno == 555);
+
+	memset(pages + 4090, 0x5a, 12);
+	for (size_t i = 0; i < 12; i++)
+		REQUIRE(pages[4090 + i] == 0x5a);
+
+	const char sample[] = "0123456789abcdef";
+	memcpy(pages + 4088, sample, sizeof(sample));
+	REQUIRE(!memcmp(pages + 4088, sample, sizeof(sample)));
+	memmove(pages + 4092, pages + 4088, 12); /* 重叠区间向高地址移动。 */
+	REQUIRE(!memcmp(pages + 4092, "0123456789ab", 12));
+	memmove(pages + 4088, pages + 4092, 12); /* 重叠区间向低地址移动。 */
+	REQUIRE(!memcmp(pages + 4088, "0123456789ab", 12));
+
+	pages[2 * 4096] = 0x33;
+	REQUIRE(munmap(pages + 4096, 4096) == 0 && errno == 555);
+	REQUIRE(pages[4088] == '0' && pages[2 * 4096] == 0x33);
+	REQUIRE(munmap(pages, 3 * 4096) == 0 && errno == 555);
+}
 
 /* fd 0 继承为输入文件，父进程把捕获文件打开为 fd 1，再 fork/exec。 */
 static void check_command(char *const argv[], int expected_status,
@@ -37,6 +96,8 @@ static void check_command(char *const argv[], int expected_status,
 
 int main(void)
 {
+	check_libc_abi();
+
 	/* /test/truncated 的 4 字节后接含 NUL 的文件，最后一次 read 只返回 1 字节。 */
 	static char joined[4 + 2 * 4096 + 1]; /* 超过管道容量，要求读写两端同时运行。 */
 	char *data = joined + 4;

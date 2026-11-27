@@ -3,5 +3,6 @@
 
 typedef int pid_t;
 typedef __PTRDIFF_TYPE__ ssize_t;
+typedef long off_t;
 
 #endif
