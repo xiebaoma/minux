@@ -23,14 +23,15 @@ class BuildSelectionTest(unittest.TestCase):
         self.assertIn("-kernel build/minux.elf", default)
         self.assertNotIn("-DCONFIG_SELFTEST", default)
 
-    def test_probes_only_join_selftest_kernel(self):
+    def test_arch_suites_and_probes_only_join_selftest_kernel(self):
         release = plan("ARCH=riscv").stdout
         selftest = plan("ARCH=riscv", "TEST=1").stdout
         self.assertIn("-kernel build/test/minux.elf", selftest)
         self.assertIn("-DCONFIG_SELFTEST", selftest)
-        for name in ("sv39_probe", "user_probe", "user_fault_probe", "user_wait_probe"):
-            self.assertNotIn(f"tests/{name}.o", release)
-            self.assertIn(f"build/test/tests/{name}.o", selftest)
+        for name in ("test_sv39", "sv39_probe", "user_probe", "user_fault_probe", "user_wait_probe"):
+            obj = f"arch/riscv/tests/{name}.o"
+            self.assertNotIn(obj, release)
+            self.assertIn(f"build/test/{obj}", selftest)
 
     def test_unknown_arch_is_rejected(self):
         result = plan("ARCH=missing-arch", check=False)

@@ -2,7 +2,7 @@
 
 Minux 是一个面向 RISC-V 64 的类 Unix 宏内核。它参照 Linux 的内核架构，使用 Linux RISC-V 系统调用 ABI 的一个子集运行自带的用户态程序。
 
-**v1.0 是首个稳定版本。** 支持通过 OpenSBI 在 QEMU `virt` 上以单 hart 启动。内核提供 Sv39 虚拟内存、抢占式调度、用户进程和 VFS，用户环境包含串口 TTY、最小 libc、shell、`echo` 和 `cat`。
+**v1.1 支持按架构选择构建配置。** 当前支持 RISC-V 64，通过 OpenSBI 在 QEMU `virt` 上以单 hart 启动。内核提供 Sv39 虚拟内存、抢占式调度、用户进程和 VFS，用户环境包含串口 TTY、最小 libc、shell、`echo` 和 `cat`。
 
 ## 设计目标
 
@@ -31,7 +31,7 @@ brew install qemu riscv64-elf-gcc python e2fsprogs
 ## 构建与运行
 
 ```bash
-git clone --branch v1.0 https://github.com/xiebaoma/minux.git
+git clone --branch main https://github.com/xiebaoma/minux.git
 cd minux
 make run
 ```
@@ -54,11 +54,13 @@ shell 通过绝对路径执行前台命令，支持一条连接两个命令的�
 | `make dump` | 生成反汇编文件 `build/minux.asm` |
 | `make clean` | 清理构建产物 |
 
-在 v1.1 开发分支上，`make run` 默认选择 RISC-V，等价于 `make ARCH=riscv run`。工具链、链接脚本、QEMU 机型和汇编入口由 [RISC-V 构建配置](arch/riscv/Makefile) 选择。可用 `CROSS_COMPILE` 覆盖交叉工具链前缀。正式镜像在 `build/`，自测镜像在 `build/test/`。
+`make run` 默认选择 RISC-V，等价于 `make ARCH=riscv run`。工具链、链接脚本、QEMU 机型和汇编入口由 [RISC-V 构建配置](arch/riscv/Makefile) 选择。可用 `CROSS_COMPILE` 覆盖交叉工具链前缀。正式镜像在 `build/`，自测镜像在 `build/test/`。
 
 ## 测试
 
-`make test` 用同一个自测内核分别启动两张 ext2 测试盘。两轮都应报告 `537/537 passed, all OK`，并分别回收磁盘子程序的退出码 42 和 73。集成测试还会检查串口行编辑、Ctrl-D、前台进程、管道、文件重定向和错误恢复。命令返回 0 表示两轮回归全部通过。
+`make test` 先检查默认和显式架构选择、测试对象隔离及未知架构报错，再用同一个自测内核分别启动两张 ext2 测试盘。两轮都应报告 `537/537 passed, all OK`，并分别回收磁盘子程序的退出码 42 和 73。集成测试还会检查串口行编辑、Ctrl-D、前台进程、管道、文件重定向和错误恢复。命令返回 0 表示完整回归通过。
+
+RISC-V 配置从 `arch/riscv/tests/` 选择 Sv39 测试和四个汇编探针。内核依次执行启动自测、rootfs 自测和开中断后的运行时自测。v1.1 两轮的 22 组测试均与 v1.0 的执行顺序和检查数一致。[v1.0 基线](docs/BASELINE-v1.0.md)
 
 ## 目录结构
 

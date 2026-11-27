@@ -1,3 +1,4 @@
+#include <asm/selftest.h>
 #include <asm/sv39.h>
 #include <minux/buddy.h>
 #include <minux/memblock.h>

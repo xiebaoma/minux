@@ -14,7 +14,7 @@
 /* 记录一条断言：ok 为假时打印 [FAIL] what */
 void check(bool ok, const char *what);
 
-/* 临时输出函数：还没有 printk，先直接走 SBI。有了 printk 后换掉 */
+/* 自测输出直接使用早期控制台。 */
 void test_puts(const char *s);
 
 /* 用物理页本身记录分配，以便在真实内存耗尽条件下测试回滚。 */
@@ -31,7 +31,6 @@ void test_fdt(void);
 void test_memblock(void);
 void test_buddy(void);
 void test_slab(void);
-void test_sv39(void);
 void test_mm(void);
 void test_elf(void);
 void test_memory_block(void);

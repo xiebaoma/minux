@@ -15,9 +15,8 @@ ARCH_SYSCALLS_SRC := user/libc/arch/riscv/syscalls.S
 ARCH_INIT_SRC := user/init.S
 ARCH_CHILD_SRC := user/child.S
 
-# 分页与用户态探针使用 RV64 寄存器、CSR 或 ecall。
-ARCH_TEST_PROBES := tests/sv39_probe.S tests/user_probe.S \
-                    tests/user_fault_probe.S tests/user_wait_probe.S
+# Sv39 自测与探针只链接到 RISC-V 自测内核。
+ARCH_TEST_SRCS := $(wildcard $(ARCH_DIR)/tests/*.c $(ARCH_DIR)/tests/*.S)
 ARCH_PIPE_TEST_SRC := tests/user/pipe.c
 SERIAL_TEST := tests/test_uart_irq.py
 

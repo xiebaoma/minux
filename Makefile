@@ -40,10 +40,13 @@ USER_LDFLAGS := -T $(USER_LDSCRIPT) $(ARCH_LDFLAGS) -s
 SRC_DIRS := $(ARCH_DIR) init lib kernel mm fs block $(ARCH_DRIVER_DIRS)
 SRCS := $(foreach d,$(SRC_DIRS),$(wildcard $(d)/*.c $(d)/*.S))
 ifeq ($(TEST),1)
-SRCS     += $(wildcard tests/*.c) $(ARCH_TEST_PROBES)
+SRCS     += $(wildcard tests/*.c) $(ARCH_TEST_SRCS)
 CFLAGS   += -DCONFIG_SELFTEST
 endif
 OBJS := $(patsubst %,$(BUILD)/%.o,$(basename $(SRCS)))
+
+# 架构自测与通用自测共享断言和用户探针的数据布局。
+$(BUILD)/$(ARCH_DIR)/tests/%.o: CPPFLAGS += -Itests
 
 BLOCK_FIXTURE := $(BUILD)/block-test.img
 EXT2_DISK := $(BUILD)/disk.ext2

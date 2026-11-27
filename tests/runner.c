@@ -1,6 +1,7 @@
 /*
  * 先运行启动自测，打开设备中断后运行抢占自测并汇总。
  */
+#include <asm/selftest.h>
 #include <minux/selftest.h>
 #include <minux/console.h>
 #include <minux/string.h>
@@ -20,7 +21,7 @@ static const struct test_suite suites[] = {
 	{ "memblock", test_memblock },
 	{ "buddy",  test_buddy },
 	{ "slab",   test_slab },
-	{ "sv39",   test_sv39 },
+	ARCH_EARLY_TEST_SUITES
 	{ "mm",     test_mm },
 	{ "elf",    test_elf },
 	{ "initramfs", test_initramfs },

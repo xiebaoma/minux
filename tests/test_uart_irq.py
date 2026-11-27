@@ -174,6 +174,8 @@ def main():
         summary = re.search(rb"==== (\d+)/(\d+) passed, all OK ====", output)
         if not summary or summary.group(1) != summary.group(2):
             raise RuntimeError("kernel selftests did not all pass")
+        if int(summary.group(1)) < 537:
+            raise RuntimeError("fewer kernel checks ran than the v1.0 RISC-V baseline")
         if output.count(TYPED) != 1 or output.count(EDITED_LINE) != 1:
             raise RuntimeError("unexpected TTY echo or edited line")
         if b"timer: 20 ticks" not in output:
