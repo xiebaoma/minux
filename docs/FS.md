@@ -2,7 +2,7 @@
 
 ## 启动和挂载
 
-`rootfs_init()` 将内嵌的 newc 归档展开成 ramfs 目录树，注册控制台设备。探测到启动盘时，它读取 ext2 根 inode，并将它接到 ramfs 的 `/disk`。路径查找经过这个挂载点后使用 ext2 的目录操作，`/disk/..` 返回 ramfs 根。`/init` 在进入 shell 前需要执行 `/disk/bin/child` 并回收其退出状态。`make run` 默认挂载构建生成的 `build/disk.ext2`。[根文件系统初始化](../init/rootfs.c) · [用户态启动过程](../user/init.S)
+分页后，平台层探测启动盘并把 `struct block_device` 交给通用启动代码。`rootfs_init(disk)` 将内嵌的 newc 归档展开成 ramfs 目录树，注册控制台设备。有启动盘时，它将该盘的 ext2 根 inode 挂到 `/disk`。路径查找经过这个挂载点后使用 ext2 的目录操作，`/disk/..` 返回 ramfs 根。`/init` 在进入 shell 前需要执行 `/disk/bin/child` 并回收其退出状态。`make run` 默认挂载构建生成的 `build/disk.ext2`。[根文件系统初始化](../init/rootfs.c) · [用户态启动过程](../user/init.S)
 
 | 路径 | 来源和用途 |
 |---|---|

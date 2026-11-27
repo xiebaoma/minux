@@ -29,9 +29,6 @@ struct virt_boot_info {
 };
 extern struct virt_boot_info virt_boot;
 
-struct block_device;
 void virt_probe_devices(const void *dtb, unsigned long hartid, struct virt_devices *devices);
-int virt_probe_boot_disk(const struct virt_devices *devices, u32 clock_hz,
-			 struct block_device **out);
 
 #endif

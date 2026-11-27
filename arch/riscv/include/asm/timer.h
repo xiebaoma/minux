@@ -2,12 +2,10 @@
 #ifndef _ASM_RISCV_TIMER_H
 #define _ASM_RISCV_TIMER_H
 
+#include <minux/timer.h>
 #include <minux/types.h>
-
-#define TIMER_HZ 10U
 
 void timer_init(u32 timebase_hz);
 void timer_handle_interrupt(void);
-unsigned long timer_ticks(void);
 
 #endif /* _ASM_RISCV_TIMER_H */

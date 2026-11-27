@@ -2,7 +2,8 @@
  * 先运行启动自测，打开设备中断后运行抢占自测并汇总。
  */
 #include <minux/selftest.h>
-#include <asm/sbi.h>
+#include <minux/console.h>
+#include <minux/string.h>
 #include "test.h"
 
 struct test_suite {
@@ -35,21 +36,20 @@ static int all_total;
 
 void test_puts(const char *s)
 {
-	while (*s)
-		sbi_console_putchar(*s++);
+	early_console_write(s, strlen(s));
 }
 
 static void test_putu(unsigned int n)
 {
 	char buf[10];
-	int i = 0;
+	char *end = buf + sizeof(buf);
+	char *p = end;
 
 	do {
-		buf[i++] = '0' + n % 10;
+		*--p = '0' + n % 10;
 		n /= 10;
 	} while (n);
-	while (i)
-		sbi_console_putchar(buf[--i]);
+	early_console_write(p, end - p);
 }
 
 void check(bool ok, const char *what)

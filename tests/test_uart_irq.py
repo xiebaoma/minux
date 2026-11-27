@@ -74,9 +74,13 @@ def main():
         proc.stdin.flush()
 
     try:
-        # stdin is a pipe, so any echoed bytes must come from the guest UART.
-        # Wait for complete log lines so the echo cannot interrupt their output.
-        ready = wait_for(b"\r\n", wait_for(b"timer: 10 Hz, timebase: "))
+        # Boot disk and rootfs tests run before the interrupt sources are armed.
+        disk = wait_for(b" bytes, read-only\r\n", wait_for(b"virtio-blk: "))
+        rootfs = wait_for(b"\nrootfs:\r\n", disk)
+        irq = wait_for(b"PLIC: base=", rootfs)
+        timer = wait_for(b"timer: 10 Hz, timebase: ", irq)
+        runtime = wait_for(b"\npreempt:\r\n", timer)
+        ready = wait_for(b": start /init\r\n", runtime)
         init = re.search(rb"user task (\d+): start /init\r\n", output)
         if not init:
             raise RuntimeError("missing /init launch")
@@ -186,6 +190,7 @@ def main():
                 proc.wait()
 
     print("Pre-buddy kernel, DTB and firmware reservations passed")
+    print("Boot disk, rootfs, interrupt setup and /init startup order passed")
     print("Minux libc startup, argv/envp, write and main returning 37 passed")
     print("/tmp ramfs I/O, independent opens and shared fd across fork/exec passed")
     print(f"/init reaped /disk/bin/child with expected exit code {expected.decode()}")

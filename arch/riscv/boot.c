@@ -1,5 +1,6 @@
 #include <asm/trap.h>
 #include <asm/virt.h>
+#include <minux/console.h>
 #include <minux/fdt.h>
 #include <minux/init.h>
 #include <minux/limits.h>
@@ -184,11 +185,12 @@ static void reserve_fdt_range(u64 address, u64 size)
 void riscv_boot_kernel(unsigned long hartid, unsigned long dtb_pa,
 		       unsigned long kernel_start, unsigned long kernel_end)
 {
+	static const char greeting[] = "Hello from Minux!\n";
 	u32 dtb_size;
 
 	/* 尽早安装 trap 入口，使后续启动故障可以报告现场。 */
 	trap_init();
-	pr_info("Hello from Minux!\n");
+	early_console_write(greeting, sizeof(greeting) - 1);
 	pr_info("boot hart: %lu\n", hartid);
 	if (!fdt_check_header((const void *)dtb_pa, &dtb_size))
 		panic("invalid FDT header at %p", (const void *)dtb_pa);

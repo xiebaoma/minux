@@ -1,3 +1,4 @@
+#include <minux/block.h>
 #include <minux/buddy.h>
 #include <minux/console.h>
 #include <minux/irq.h>
@@ -171,7 +172,7 @@ void test_user_wait(void)
 		/* 写文件的探针使用独立挂载，卸载后仍可精确核对页数。 */
 		if (cases[i].entry == wait_probe_exec || cases[i].entry == wait_probe_files ||
 		    cases[i].entry == wait_probe_commands) {
-			int err = rootfs_init();
+			int err = rootfs_init(boot_disk);
 			check(!err, "mount private ramfs for the user file probe");
 			if (err)
 				continue;

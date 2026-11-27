@@ -22,7 +22,7 @@ U 模式的 `ecall` 进入 RISC-V 系统调用分发。Linux RV64 ABI 使用 `a7
 
 ## 周期性定时器
 
-启动代码从 DTB 的 `/cpus/timebase-frequency` 取得 `time` 计数器频率。`timer_init()` 按该频率计算每秒 10 次的间隔，通过 SBI TIME 扩展设置首次绝对截止时间，然后分别打开 `sie.STIE` 和 `sstatus.SIE`。每次定时器中断都重新设置下次截止时间并增加 tick 计数。自测镜像在 idle 循环中每秒输出一次计数，两次输出后关机。普通镜像的周期性计数输出已关闭，方便串口交互。
+启动代码从 DTB 的 `/cpus/timebase-frequency` 取得 `time` 计数器频率。rootfs 就绪后，`platform_init_irqs()` 先配置 PLIC 和 UART，再调用 `timer_init()` 按该频率设置每秒 10 次的周期。定时器通过 SBI TIME 设置首次绝对截止时间并打开 `sie.STIE`。平台初始化返回后，通用启动入口才打开总中断 `sstatus.SIE`。每次定时器中断都重新设置下次截止时间并增加 tick 计数。自测镜像在 idle 循环中每秒输出一次计数，两次输出后关机。普通镜像的周期性计数输出已关闭，方便串口交互。
 
 从 v0.5 开始，定时器中断更新计数后还会派发就绪线程。被切出的线程重新运行时，从自己内核栈上的 trap 现场恢复。见 [内核线程与调度](SCHED.md)。
 

@@ -40,7 +40,8 @@ struct file {
 };
 
 extern struct inode *root_inode;
-int rootfs_init(void);
+struct block_device;
+int rootfs_init(struct block_device *disk);
 int vfs_lookup(struct inode *root, const char *path, struct inode **out);
 int vfs_open(struct inode *root, const char *path, struct file *out);
 int vfs_open_flags(struct inode *root, const char *path, int flags, struct file *out);

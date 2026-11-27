@@ -1,4 +1,10 @@
+#include <asm/plic.h>
+#include <asm/timer.h>
+#include <asm/uart.h>
 #include <asm/virt.h>
+#include <minux/block.h>
+#include <minux/init.h>
+#include <minux/printk.h>
 #include <minux/fdt.h>
 #include <minux/errno.h>
 #include <minux/page.h>
@@ -205,14 +211,38 @@ void virt_probe_devices(const void *dtb, unsigned long hartid, struct virt_devic
 	platform = NULL;
 }
 
-int virt_probe_boot_disk(const struct virt_devices *devices, u32 clock_hz, struct block_device **out)
+struct block_device *platform_probe_boot_disk(void)
 {
+	const struct virt_devices *devices = &virt_boot.devices;
+
 	for (size_t i = VIRT_IRQ_MMIO_COUNT; i < devices->nr_mmio; i++) {
 		const struct memblock_region *slot = &devices->mmio[i];
 		uintptr_t regs = (uintptr_t)arch_phys_to_virt(slot->start);
-		int err = virtio_blk_probe(regs, slot->end - slot->start, clock_hz, out);
-		if (err != -ENODEV)
-			return err;
+		struct block_device *disk;
+		int err = virtio_blk_probe(regs, slot->end - slot->start,
+					   virt_boot.timebase_frequency, &disk);
+
+		if (err == -ENODEV)
+			continue;
+		if (err) {
+			pr_err("virtio-blk: probe failed: %d\n", err);
+			return NULL;
+		}
+		pr_info("virtio-blk: %llu sectors of %u bytes, read-only\n",
+			disk->sectors, BLK_SECTOR_SIZE);
+		return disk;
 	}
-	return -ENODEV;
+	return NULL;
+}
+
+void platform_init_irqs(void)
+{
+	const struct virt_irq_devices *irq = &virt_boot.devices.irq;
+
+	pr_info("PLIC: base=0x%lx, S context=%u; UART: base=0x%lx, IRQ=%u\n",
+		irq->plic_base, irq->plic_s_context, irq->uart_base, irq->uart_irq);
+	plic_init(irq);
+	uart_init(irq);
+	timer_init(virt_boot.timebase_frequency);
+	pr_info("timer: %u Hz, timebase: %u Hz\n", TIMER_HZ, virt_boot.timebase_frequency);
 }

@@ -1,4 +1,4 @@
-#include <asm/timer.h>
+#include <minux/timer.h>
 #include <minux/buddy.h>
 #include <minux/irq.h>
 #include <minux/task.h>
