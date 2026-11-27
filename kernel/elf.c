@@ -129,6 +129,7 @@ int elf_load(const struct file *file, struct mm_struct **result, uintptr_t *entr
 		err = -ENOMEM;
 		goto fail;
 	}
+	mm->mmap_limit = stack_start - PAGE_SIZE;
 	*result = mm;
 	*entry = eh.entry;
 	return 0;

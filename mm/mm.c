@@ -1,4 +1,5 @@
 #include <minux/buddy.h>
+#include <minux/errno.h>
 #include <minux/mm.h>
 #include <minux/page.h>
 #include <minux/paging.h>
@@ -16,6 +17,7 @@ struct mm_struct *mm_alloc(void)
 		kfree(mm);
 		return NULL;
 	}
+	mm->mmap_limit = arch_user_limit();
 	INIT_LIST_HEAD(&mm->vmas);
 	return mm;
 }
@@ -56,6 +58,7 @@ struct mm_struct *mm_dup(struct mm_struct *src)
 
 	if (!dst)
 		return NULL;
+	dst->mmap_limit = src->mmap_limit;
 	list_for_each_entry(vma, &src->vmas, vm_link) {
 		/* 源链表已按地址排序，可直接追加到副本。 */
 		if (!insert_vma(dst, &dst->vmas, vma->vm_start, vma->vm_end, vma->vm_flags))
@@ -69,25 +72,149 @@ fail:
 	return NULL;
 }
 
+static struct list_head *find_free_slot(struct mm_struct *mm, uintptr_t start,
+					uintptr_t end)
+{
+	struct list_head *pos;
+
+	list_for_each(pos, &mm->vmas) {
+		struct vm_area_struct *vma =
+			list_entry(pos, struct vm_area_struct, vm_link);
+
+		if (end <= vma->vm_start)
+			return pos;
+		if (start < vma->vm_end)
+			return NULL;
+	}
+	return &mm->vmas;
+}
+
 const struct vm_area_struct *mm_add_vma(struct mm_struct *mm, uintptr_t start,
 				       uintptr_t end, unsigned int flags)
 {
 	struct list_head *pos;
-	struct vm_area_struct *vma;
 
 	if (start < PAGE_SIZE || start >= end || end > arch_user_limit() ||
 	    (start | end) % PAGE_SIZE || !(flags & VM_ACCESS_MASK) ||
 	    (flags & ~(VM_ACCESS_MASK | VM_ANON)) ||
 	    ((flags & VM_WRITE) && !(flags & VM_READ)))
 		return NULL;
-	list_for_each(pos, &mm->vmas) {
-		vma = list_entry(pos, struct vm_area_struct, vm_link);
-		if (end <= vma->vm_start)
-			break;
-		if (start < vma->vm_end)
-			return NULL;
+	pos = find_free_slot(mm, start, end);
+	return pos ? insert_vma(mm, pos, start, end, flags) : NULL;
+}
+
+uintptr_t mm_mmap_anon(struct mm_struct *mm, uintptr_t hint, size_t len,
+		       unsigned int vm_flags, int *err)
+{
+	struct list_head *pos, *cur;
+	uintptr_t limit, ceiling, start;
+
+	if (!mm || !len || !(vm_flags & VM_ACCESS_MASK) ||
+	    (vm_flags & ~(VM_ACCESS_MASK | VM_ANON)) ||
+	    ((vm_flags & VM_WRITE) && !(vm_flags & VM_READ))) {
+		if (err)
+			*err = -EINVAL;
+		return 0;
 	}
-	return insert_vma(mm, pos, start, end, flags);
+	limit = mm->mmap_limit;
+	if (limit > arch_user_limit())
+		limit = arch_user_limit();
+	limit &= ~(uintptr_t)(PAGE_SIZE - 1);
+	if (limit <= PAGE_SIZE || len > limit - PAGE_SIZE) {
+		if (err)
+			*err = -ENOMEM;
+		return 0;
+	}
+	len = pfn_up(len) * PAGE_SIZE;
+	vm_flags |= VM_ANON;
+
+	if (hint >= PAGE_SIZE && !(hint % PAGE_SIZE) && hint <= limit - len) {
+		pos = find_free_slot(mm, hint, hint + len);
+		if (pos) {
+			start = hint;
+			goto insert;
+		}
+	}
+
+	ceiling = limit;
+	pos = &mm->vmas;
+	for (cur = mm->vmas.prev; cur != &mm->vmas; cur = cur->prev) {
+		struct vm_area_struct *vma =
+			list_entry(cur, struct vm_area_struct, vm_link);
+
+		if (vma->vm_start >= ceiling) {
+			pos = cur;
+			continue;
+		}
+		if (vma->vm_end < ceiling && ceiling - vma->vm_end >= len) {
+			start = ceiling - len;
+			goto insert;
+		}
+		if (vma->vm_start <= PAGE_SIZE) {
+			ceiling = PAGE_SIZE;
+			break;
+		}
+		ceiling = vma->vm_start;
+		pos = cur;
+	}
+	if (ceiling <= PAGE_SIZE || ceiling - PAGE_SIZE < len) {
+		if (err)
+			*err = -ENOMEM;
+		return 0;
+	}
+	start = ceiling - len;
+
+insert:
+	if (!insert_vma(mm, pos, start, start + len, vm_flags)) {
+		if (err)
+			*err = -ENOMEM;
+		return 0;
+	}
+	if (err)
+		*err = 0;
+	return start;
+}
+
+int mm_munmap(struct mm_struct *mm, uintptr_t start, size_t len)
+{
+	const uintptr_t limit = arch_user_limit();
+	struct vm_area_struct *vma, *next;
+	uintptr_t end;
+	bool touched = false;
+
+	if (!mm || !len || start % PAGE_SIZE || start >= limit ||
+	    len > limit - start)
+		return -EINVAL;
+	end = start + pfn_up(len) * PAGE_SIZE;
+
+	list_for_each_entry_safe(vma, next, &mm->vmas, vm_link) {
+		if (vma->vm_end <= start)
+			continue;
+		if (vma->vm_start >= end)
+			break;
+		if (vma->vm_start < start && end < vma->vm_end) {
+			/* 先分配右侧新节点，失败时原 VMA 与页表均未被改动。 */
+			if (!insert_vma(mm, vma->vm_link.next, end,
+					vma->vm_end, vma->vm_flags))
+				return -ENOMEM;
+			vma->vm_end = start;
+			touched = true;
+			break;
+		}
+		touched = true;
+		if (start <= vma->vm_start && vma->vm_end <= end) {
+			list_del(&vma->vm_link);
+			kfree(vma);
+		} else if (vma->vm_start < start) {
+			vma->vm_end = start;
+		} else {
+			vma->vm_start = end;
+			break;
+		}
+	}
+	if (touched)
+		arch_pgd_unmap_range(mm->pgd, start, end);
+	return 0;
 }
 
 const struct vm_area_struct *find_vma(const struct mm_struct *mm, uintptr_t addr)

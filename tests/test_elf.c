@@ -93,6 +93,8 @@ void test_elf(void)
 	check(!load_fixture(&valid, sizeof(valid), sizeof(valid), 0, &mm, &pc) && mm && pc == TEXT_VA,
 	      "elf: accept a static executable with non-page-aligned segment starts");
 	if (mm) {
+		check(mm->mmap_limit == arch_user_limit() - 9 * PAGE_SIZE,
+		      "elf: reserve stack and one-page guard above mmap_limit");
 		page = arch_pgd_user_page(mm->pgd, pc, &access);
 		check(page && access == (VM_READ | VM_EXEC) &&
 		      !memcmp((u8 *)page_address(page) + TEXT_OFF, valid.text, 4),
