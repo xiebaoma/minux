@@ -2,6 +2,7 @@
 #include <minux/errno.h>
 #include <minux/fcntl.h>
 #include <minux/fdtable.h>
+#include <minux/mman.h>
 #include <minux/signal.h>
 #include <minux/syscall.h>
 #include "user_wait_probe.h"
@@ -527,6 +528,147 @@ wait_probe_fork:
     andi    a0, a0, 63
     ori     a0, a0, 64
     j       .Lexit
+
+    .macro do_mmap addr, len, prot, flags, fd=-1, off=0
+    mv      a0, \addr
+    li      a1, \len
+    li      a2, (\prot)
+    li      a3, (\flags)
+    li      a4, \fd
+    li      a5, \off
+    li      a7, __NR_mmap
+    ecall
+    .endm
+
+    .globl wait_probe_mmap
+wait_probe_mmap:
+    addi    sp, sp, -16
+    do_mmap zero, 0, PROT_READ, MAP_PRIVATE|MAP_ANONYMOUS
+    expect_result -EINVAL
+    do_mmap zero, WAIT_PROBE_PAGE_BYTES, PROT_READ, MAP_PRIVATE
+    expect_result -EINVAL
+    do_mmap zero, WAIT_PROBE_PAGE_BYTES, PROT_READ, MAP_SHARED|MAP_ANONYMOUS
+    expect_result -EINVAL
+    do_mmap zero, WAIT_PROBE_PAGE_BYTES, PROT_READ, MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED
+    expect_result -EINVAL
+    do_mmap zero, WAIT_PROBE_PAGE_BYTES, PROT_READ, MAP_PRIVATE|MAP_ANONYMOUS|0x100
+    expect_result -EINVAL
+    do_mmap zero, WAIT_PROBE_PAGE_BYTES, PROT_READ, MAP_PRIVATE|MAP_ANONYMOUS, 0, 0
+    expect_result -EINVAL
+    do_mmap zero, WAIT_PROBE_PAGE_BYTES, PROT_READ, MAP_PRIVATE|MAP_ANONYMOUS, -1, WAIT_PROBE_PAGE_BYTES
+    expect_result -EINVAL
+    do_mmap zero, WAIT_PROBE_PAGE_BYTES, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS
+    expect_result -EINVAL
+    do_mmap zero, WAIT_PROBE_PAGE_BYTES, PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS
+    expect_result -EINVAL
+    do_mmap zero, WAIT_PROBE_PAGE_BYTES, PROT_READ|0x8, MAP_PRIVATE|MAP_ANONYMOUS
+    expect_result -EINVAL
+    do_mmap zero, -1, PROT_READ, MAP_PRIVATE|MAP_ANONYMOUS
+    expect_result -ENOMEM
+
+    li      a0, WAIT_PROBE_PAGE_BYTES
+    li      a1, 0
+    li      a7, __NR_munmap
+    ecall
+    expect_result -EINVAL
+    li      a0, WAIT_PROBE_PAGE_BYTES + 1
+    li      a1, WAIT_PROBE_PAGE_BYTES
+    li      a7, __NR_munmap
+    ecall
+    expect_result -EINVAL
+    li      a0, WAIT_PROBE_PAGE_BYTES
+    li      a1, -1
+    li      a7, __NR_munmap
+    ecall
+    expect_result -EINVAL
+
+    do_mmap zero, 2 * WAIT_PROBE_PAGE_BYTES + 1, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS
+    blez    a0, .Lfail
+    li      t0, WAIT_PROBE_PAGE_BYTES - 1
+    and     t0, a0, t0
+    bnez    t0, .Lfail
+    mv      s0, a0
+    li      t0, WAIT_PROBE_PAGE_BYTES
+    add     s1, s0, t0
+    add     s2, s1, t0
+    li      t0, 0x11
+    sd      t0, 0(s0)
+    sd      t0, -8(s1)
+    li      t0, 0x22
+    sd      t0, 0(s1)
+    li      t0, 0x33
+    sd      t0, 0(s2)
+
+    li      a0, SIGCHLD
+    li      a1, 0
+    li      a7, __NR_clone
+    ecall
+    bltz    a0, .Lfail
+    beqz    a0, .Lmmap_cow_child
+    mv      s3, a0
+    wait4   s3, sp
+    bne     a0, s3, .Lfail
+    lw      t0, 0(sp)
+    bnez    t0, .Lfail
+    ld      t0, 0(s0)
+    li      t1, 0x11
+    bne     t0, t1, .Lfail
+    ld      t0, 0(s2)
+    li      t1, 0x33
+    bne     t0, t1, .Lfail
+    li      t0, 0x55
+    sd      t0, 0(s0)
+
+    mv      a0, s1
+    li      a1, WAIT_PROBE_PAGE_BYTES
+    li      a7, __NR_munmap
+    ecall
+    bnez    a0, .Lfail
+    ld      t0, 0(s0)
+    li      t1, 0x55
+    bne     t0, t1, .Lfail
+    li      t0, 0x66
+    sd      t0, 0(s2)
+    ld      t1, 0(s2)
+    bne     t0, t1, .Lfail
+
+    li      a0, SIGCHLD
+    li      a1, 0
+    li      a7, __NR_clone
+    ecall
+    bltz    a0, .Lfail
+    beqz    a0, .Lmmap_fault_child
+    mv      s3, a0
+    wait4   s3, sp
+    bne     a0, s3, .Lfail
+    lw      t0, 0(sp)
+    li      t1, SIGSEGV
+    bne     t0, t1, .Lfail
+
+    mv      a0, s0
+    li      a1, 3 * WAIT_PROBE_PAGE_BYTES
+    li      a7, __NR_munmap
+    ecall
+    bnez    a0, .Lfail
+    j       .Ldone
+
+.Lmmap_cow_child:
+    ld      t0, 0(s0)
+    li      t1, 0x11
+    bne     t0, t1, .Lfail
+    li      t0, 0xaa
+    sd      t0, 0(s0)
+    li      t0, 0xcc
+    sd      t0, 0(s2)
+    ld      t1, 0(s0)
+    li      t0, 0xaa
+    bne     t0, t1, .Lfail
+    li      a0, 0
+    j       .Lexit
+
+.Lmmap_fault_child:
+    ld      t0, 0(s1)
+    j       .Lfail
 
 wait_probe_parent_orphans:
     probe_action WAIT_PROBE_SPAWN_EXITED

@@ -8,6 +8,7 @@
 #define WAIT_PROBE_PARENT_DONE    4
 
 #define FORK_PROBE_ROUNDS         8
+#define WAIT_PROBE_PAGE_BYTES     4096
 
 #define WAIT_PROBE_EXIT_CODE      298
 #define WAIT_PROBE_EXIT_STATUS    (42 << 8)

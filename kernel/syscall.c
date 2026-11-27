@@ -1,4 +1,6 @@
 #include <minux/errno.h>
+#include <minux/mm.h>
+#include <minux/mman.h>
 #include <minux/printk.h>
 #include <minux/syscall.h>
 #include <minux/signal.h>
@@ -35,4 +37,30 @@ long sys_wait4(int pid, uintptr_t status_addr, int options, uintptr_t rusage_add
 	    copy_to_user(status_addr, &status, sizeof(status)))
 		return -EFAULT;
 	return child_pid;
+}
+
+long sys_mmap(uintptr_t addr, size_t len, int prot, int flags, int fd, long offset)
+{
+	unsigned int vm_flags = 0;
+	uintptr_t mapped;
+	int err;
+
+	if (!len || flags != (MAP_PRIVATE | MAP_ANONYMOUS) || fd != -1 || offset)
+		return -EINVAL;
+	if (!prot || (prot & ~(PROT_READ | PROT_WRITE | PROT_EXEC)) ||
+	    ((prot & PROT_WRITE) && !(prot & PROT_READ)))
+		return -EINVAL;
+	if (prot & PROT_READ)
+		vm_flags |= VM_READ;
+	if (prot & PROT_WRITE)
+		vm_flags |= VM_WRITE;
+	if (prot & PROT_EXEC)
+		vm_flags |= VM_EXEC;
+	mapped = mm_mmap_anon(task_current()->mm, addr, len, vm_flags, &err);
+	return err ? err : (long)mapped;
+}
+
+long sys_munmap(uintptr_t addr, size_t len)
+{
+	return mm_munmap(task_current()->mm, addr, len);
 }

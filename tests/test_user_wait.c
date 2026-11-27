@@ -23,6 +23,9 @@ extern const char wait_probe_child[], wait_probe_fault[], wait_probe_fork[], wai
 extern const char wait_probe_exec[], wait_probe_exec_errors[], wait_probe_files[], wait_probe_pipes[];
 extern const char wait_probe_commands[];
 extern const char wait_probe_tty[];
+extern const char wait_probe_mmap[];
+
+_Static_assert(WAIT_PROBE_PAGE_BYTES == PAGE_SIZE, "wait probe page size mismatch");
 
 static struct {
 	unsigned int blocked_parents;
@@ -152,6 +155,8 @@ void test_user_wait(void)
 		  "execve: invalid ELF, pathname and vectors return to the same user program" },
 		{ wait_probe_fork, 0, 0, 0,
 		  "fork: repeated user clone, store, kernel copy and wait preserve private stacks and PIDs" },
+		{ wait_probe_mmap, 0, 0, 0,
+		  "mmap: validate flags, COW across fork, split via munmap and fault on the unmapped page" },
 		{ wait_probe_parent_first, 1, 0, 0,
 		  "wait4: parent blocks before child exits and wakes with its PID and status" },
 		{ wait_probe_child_first, 0, 3, 0,

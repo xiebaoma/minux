@@ -17,6 +17,8 @@ long sys_write(int fd, uintptr_t buf, size_t count);
 long sys_close(int fd);
 long sys_clone(unsigned long flags, uintptr_t stack, const struct pt_regs *regs);
 long sys_execve(uintptr_t filename, uintptr_t argv, uintptr_t envp, struct pt_regs *regs);
+long sys_mmap(uintptr_t addr, size_t len, int prot, int flags, int fd, long offset);
+long sys_munmap(uintptr_t addr, size_t len);
 long sys_getpid(void);
 void sys_exit(int code) __noreturn;
 long sys_wait4(int pid, uintptr_t status_addr, int options, uintptr_t rusage_addr);
