@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <fcntl.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
@@ -63,6 +64,104 @@ static void check_libc_abi(void)
 	REQUIRE(munmap(pages, 3 * 4096) == 0 && errno == 555);
 }
 
+static void check_heap(void)
+{
+	unsigned char *blocks[24];
+	size_t sizes[24];
+
+	errno = 444;
+	REQUIRE(malloc(0) == NULL && errno == 444);
+	free(NULL);
+	REQUIRE(errno == 444);
+	REQUIRE(realloc(NULL, 0) == NULL && errno == 444);
+	REQUIRE(malloc((size_t)-1) == NULL && errno == ENOMEM);
+	REQUIRE(malloc((size_t)-8) == NULL && errno == ENOMEM);
+
+	for (size_t i = 0; i < 24; i++) {
+		sizes[i] = i * 37 + 1;
+		blocks[i] = malloc(sizes[i]);
+		REQUIRE(blocks[i] != NULL && ((__UINTPTR_TYPE__)blocks[i] % 16) == 0);
+		memset(blocks[i], (int)(0x20 + i), sizes[i]);
+	}
+	for (size_t i = 1; i < 24; i += 2)
+		free(blocks[i]);
+	for (size_t i = 0; i < 24; i += 2) {
+		for (size_t j = 0; j < sizes[i]; j++)
+			REQUIRE(blocks[i][j] == (unsigned char)(0x20 + i));
+		free(blocks[i]);
+	}
+
+	/* 全部释放后再次分配中等块，验证空闲块合并及空 arena 归还后再分配正常。 */
+	unsigned char *merged = malloc(7000);
+	REQUIRE(merged != NULL && ((__UINTPTR_TYPE__)merged % 16) == 0);
+	memset(merged, 0xaa, 7000);
+	free(merged);
+
+	unsigned char *p = realloc(NULL, 24);
+	REQUIRE(p != NULL && ((__UINTPTR_TYPE__)p % 16) == 0);
+	for (size_t i = 0; i < 24; i++)
+		p[i] = (unsigned char)(i + 1);
+
+	/* 后继空闲块充足时原地扩容。 */
+	unsigned char *same = realloc(p, 128);
+	REQUIRE(same == p);
+	for (size_t i = 0; i < 24; i++)
+		REQUIRE(p[i] == (unsigned char)(i + 1));
+
+	/* 紧邻块被占用时触发迁移扩容，随后原地缩容。 */
+	unsigned char *blocker = malloc(64);
+	REQUIRE(blocker != NULL);
+	memset(blocker, 0xee, 64);
+	p = realloc(p, 600);
+	REQUIRE(p != NULL && p != same && ((__UINTPTR_TYPE__)p % 16) == 0);
+	for (size_t i = 0; i < 24; i++)
+		REQUIRE(p[i] == (unsigned char)(i + 1));
+	for (size_t i = 24; i < 600; i++)
+		p[i] = (unsigned char)(i & 0xff);
+
+	same = realloc(p, 80);
+	REQUIRE(same == p);
+	for (size_t i = 0; i < 24; i++)
+		REQUIRE(p[i] == (unsigned char)(i + 1));
+
+	/* 从小块迁移为跨多页大块，再继续扩容、原地缩容并验证失败不破坏原块。 */
+	p = realloc(p, 20000);
+	REQUIRE(p != NULL && ((__UINTPTR_TYPE__)p % 16) == 0);
+	for (size_t i = 0; i < 24; i++)
+		REQUIRE(p[i] == (unsigned char)(i + 1));
+	for (size_t i = 24; i < 80; i++)
+		REQUIRE(p[i] == (unsigned char)(i & 0xff));
+	memset(p + 80, 0x5c, 20000 - 80);
+
+	p = realloc(p, 36000);
+	REQUIRE(p != NULL && p[0] == 1 && p[19999] == 0x5c);
+
+	same = realloc(p, 96);
+	REQUIRE(same == p && p[0] == 1 && p[23] == 24 && p[80] == 0x5c);
+
+	errno = 0;
+	REQUIRE(realloc(p, (size_t)-1) == NULL && errno == ENOMEM);
+	REQUIRE(p[0] == 1 && p[23] == 24 && p[80] == 0x5c);
+
+	errno = 333;
+	REQUIRE(realloc(p, 0) == NULL && errno == 333);
+	for (size_t i = 0; i < 64; i++)
+		REQUIRE(blocker[i] == 0xee);
+	free(blocker);
+
+	for (unsigned int round = 0; round < 4; round++) {
+		void *batch[12];
+		for (size_t i = 0; i < 12; i++) {
+			size_t sz = (i % 3 == 0) ? 12000 : (i * 512 + 48);
+			batch[i] = malloc(sz);
+			REQUIRE(batch[i] != NULL);
+			memset(batch[i], (int)(round + i), sz);
+		}
+		for (size_t i = 0; i < 12; i++)
+			free(batch[i]);
+	}
+}
+
 /* fd 0 继承为输入文件，父进程把捕获文件打开为 fd 1，再 fork/exec。 */
 static void check_command(char *const argv[], int expected_status,
 			  const char *expected, size_t length)
@@ -97,6 +196,7 @@ static void check_command(char *const argv[], int expected_status,
 int main(void)
 {
 	check_libc_abi();
+	check_heap();
 
 	/* /test/truncated 的 4 字节后接含 NUL 的文件，最后一次 read 只返回 1 字节。 */
 	static char joined[4 + 2 * 4096 + 1]; /* 超过管道容量，要求读写两端同时运行。 */

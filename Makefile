@@ -111,7 +111,8 @@ USER_LIBDIR := $(BUILD)/user/libc
 USER_CRT := $(BUILD)/$(ARCH_CRT_SRC:.S=.o)
 USER_SYSCALLS := $(BUILD)/$(ARCH_SYSCALLS_SRC:.S=.o)
 USER_OBJS := $(addprefix $(BUILD)/user/,$(addsuffix .o,$(USER_COMMANDS)))
-LIBC_OBJS := $(USER_SYSCALLS) $(USER_LIBDIR)/errno.o $(USER_LIBDIR)/sys.o $(USER_LIBDIR)/string.o
+LIBC_OBJS := $(USER_SYSCALLS) $(USER_LIBDIR)/errno.o $(USER_LIBDIR)/sys.o \
+             $(USER_LIBDIR)/string.o $(USER_LIBDIR)/malloc.o
 
 $(USER_OBJS) $(USER_CRT) $(LIBC_OBJS) $(BUILD)/tests/user/commands.o: CFLAGS := $(USER_CFLAGS)
 $(USER_SYSCALLS) $(USER_LIBDIR)/sys.o: CPPFLAGS += -I$(ARCH_DIR)/include
