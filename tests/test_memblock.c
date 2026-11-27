@@ -1,7 +1,18 @@
 #include <minux/limits.h>
 #include <minux/memblock.h>
 #include <minux/page.h>
+#include <minux/printk.h>
+#include <minux/selftest.h>
 #include "test.h"
+
+void selftest_report_boot_reservations(void)
+{
+	const struct memblock_type *reserved = &boot_memblock.reserved;
+
+	for (unsigned int i = 0; i < reserved->count; i++)
+		pr_info("pre-buddy reserved: [0x%llx, 0x%llx)\n",
+			reserved->regions[i].start, reserved->regions[i].end);
+}
 
 struct free_ranges {
 	struct memblock_region ranges[3];

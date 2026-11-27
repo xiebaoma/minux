@@ -14,6 +14,22 @@ PROMPT = b"minux$ "
 TIMEOUT = 20
 
 
+def check_boot_reservations(output):
+    def ranges(label):
+        pattern = rb"(?m)^" + re.escape(label) + rb": \[(0x[0-9a-f]+), (0x[0-9a-f]+)\)"
+        return [(int(lo, 16), int(hi, 16)) for lo, hi in re.findall(pattern, output)]
+
+    reserved = ranges(b"pre-buddy reserved")
+    kernel = ranges(b"kernel image")
+    dtb = ranges(b"DTB storage")
+    firmware = ranges(b"FDT reserved-memory") + ranges(b"FDT reserved")
+    if len(kernel) != 1 or len(dtb) != 1 or not firmware:
+        raise RuntimeError("missing kernel, DTB or firmware boot ranges")
+    for start, end in kernel + dtb + firmware:
+        if not any(lo <= start < end <= hi for lo, hi in reserved):
+            raise RuntimeError(f"boot range [{start:#x}, {end:#x}) missing before buddy")
+
+
 def main():
     if len(sys.argv) < 3:
         raise SystemExit("usage: test_uart_irq.py EXPECTED_STATUS QEMU [QEMU arguments...]")
@@ -150,6 +166,7 @@ def main():
             pass
         proc.wait(timeout=max(0.1, deadline - time.monotonic()))
 
+        check_boot_reservations(output)
         summary = re.search(rb"==== (\d+)/(\d+) passed, all OK ====", output)
         if not summary or summary.group(1) != summary.group(2):
             raise RuntimeError("kernel selftests did not all pass")
@@ -168,6 +185,7 @@ def main():
                 proc.kill()
                 proc.wait()
 
+    print("Pre-buddy kernel, DTB and firmware reservations passed")
     print("Minux libc startup, argv/envp, write and main returning 37 passed")
     print("/tmp ramfs I/O, independent opens and shared fd across fork/exec passed")
     print(f"/init reaped /disk/bin/child with expected exit code {expected.decode()}")

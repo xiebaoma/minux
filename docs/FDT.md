@@ -2,9 +2,9 @@
 
 ## 目的与启动顺序
 
-在当前 QEMU `virt` 启动路径中，OpenSBI 通过 `a0` 传入启动 hart 编号、通过 `a1` 传入 DTB 的物理地址。Minux 尚未启用分页：`head.S` 使用内核镜像中预留的启动栈，再调用 `start_kernel(hartid, dtb_pa)`。此时读取 DTB 不依赖物理内存分配器；启动链必须保证传入地址可读，并在解析期间保留 DTB 内容。
+OpenSBI 通过 `a0` 传入启动 hart 编号，通过 `a1` 传入 DTB 物理地址。`head.S` 建立启动栈、清零 BSS，并在 `a2`、`a3` 中传入内核镜像的物理起止地址，然后调用 `riscv_boot_kernel()`。
 
-`start_kernel()` 检查 DTB 头部，登记内核镜像和 DTB 自身的地址区间，再遍历节点、属性和头部指向的内存保留表。所有区间均使用 `[起点, 终点)` 表示，终点不属于该区间。
+RISC-V 入口先安装异常入口，检查 DTB 头部，把内核镜像、DTB、RAM 与固件保留区登记到 `boot_memblock`。随后探测 MMIO，用同一张内存表分配并保留 Sv39 启动页表。切换到高地址栈并撤销低地址映射后，通用入口 `start_kernel()` 使用这张表初始化 buddy。分页后使用的设备描述只保存物理区间、中断配置和时钟频率。[RISC-V 启动入口](../arch/riscv/boot.c) · [通用初始化](../init/main.c)
 
 ## 数据如何读取
 
@@ -34,8 +34,8 @@ DTB 是一块连续的扁平字节数据，不是已经展开的 C 节点树。�
 
 静态 `reg` 直接给出物理起点和字节数。动态 `size` 给出要保留的字节数，由内核在启动时选定一段连续 RAM，还可以用 `alignment` 约束对齐、用 `alloc-ranges` 限定候选地址范围。两者同时存在时以 `reg` 为准。Minux 遇到启用且只有 `size` 的子节点会打印节点名并停机。 [Devicetree 规范](https://devicetree-specification.readthedocs.io/en/latest/chapter3-devicenodes.html#reserved-memory-child-nodes)
 
-地址和长度分别支持 1 或 2 个 cell。启用的 `/reserved-memory` 若带非空 `ranges`，启动会报错停机。`no-map` 和 `reusable` 区域都从空闲页中扣除，映射和回收策略留待后续版本。解析器要求内存保留表、结构区、字符串区按此顺序排列。首次访问 `dtb_pa` 依赖可信的启动链，开启分页前需要为 DTB 建立有效映射或复制它。
+地址和长度分别支持 1 或 2 个 cell。启用的 `/reserved-memory` 若带非空 `ranges`，启动会报错停机。`no-map` 和 `reusable` 区域都从空闲页中扣除，映射和回收策略留待后续版本。解析器要求内存保留表、结构区、字符串区按此顺序排列。首次访问 `dtb_pa` 依赖启动链提供可读的物理地址，DTB 解析在开启分页前完成。
 
 ## 验证
 
-在 QEMU `virt` 的 128 MiB、单 hart 配置下，`make test` 的启动日志包含 hart 0、`[0x80000000, 0x88000000)` 的 RAM，以及 OpenSBI 保留区。内核的 `fdt` 和 `memblock` 自测随完整回归一起运行，集成脚本会检查自测汇总、QEMU 退出码和超时。[测试说明](../README.md#测试)
+在 QEMU `virt` 的 128 MiB、单 hart 配置下，`make test` 的启动日志包含 hart 0、`[0x80000000, 0x88000000)` 的 RAM，以及 OpenSBI 保留区。内核的 `fdt` 和 `memblock` 自测随完整回归一起运行，串口测试会逐段核对内核镜像、DTB 和固件声明的区间，确认它们都包含在 buddy 接管前的保留表中。[测试说明](../README.md#测试)

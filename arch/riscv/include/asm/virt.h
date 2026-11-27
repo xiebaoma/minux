@@ -22,6 +22,13 @@ struct virt_devices {
 	size_t nr_mmio;
 };
 
+/* 分页前填写，分页后通过高地址访问。字段只保存数值和物理区间。 */
+struct virt_boot_info {
+	struct virt_devices devices;
+	u32 timebase_frequency;
+};
+extern struct virt_boot_info virt_boot;
+
 struct block_device;
 void virt_probe_devices(const void *dtb, unsigned long hartid, struct virt_devices *devices);
 int virt_probe_boot_disk(const struct virt_devices *devices, u32 clock_hz,

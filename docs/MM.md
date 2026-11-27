@@ -4,7 +4,7 @@
 
 ## memblock 与 buddy
 
-`start_kernel()` 从 FDT 登记 RAM 和固件保留区，同时保留内核镜像、DTB 与 FDT 保留表列出的范围。RAM 只计完整页，保留区按页向外取整。`buddy_init()` 从空闲页中划出页描述符数组，将它登记到保留表，再接管剩余页。页描述符按 RAM 段组织，物理地址空洞无需描述符。[FDT 早期读取](FDT.md)
+`riscv_boot_kernel()` 从 FDT 登记 RAM 和固件保留区，同时保留内核镜像、DTB 与 FDT 保留表列出的范围。RAM 只计完整页，保留区按页向外取整。`buddy_init()` 从空闲页中划出页描述符数组，将它登记到保留表，再接管剩余页。页描述符按 RAM 段组织，物理地址空洞无需描述符。[FDT 早期读取](FDT.md)
 
 buddy 为每个阶维护一条空闲链表。`order` 阶的块包含 `2^order` 个连续页，首帧按块大小对齐，v0.3 支持 0 至 10 阶。`alloc_pages(order)` 优先取同阶空闲块，必要时拆分更高阶的块。`free_pages(page, order)` 检查首帧和原阶数，再尝试与同一 RAM 段内同阶的空闲伙伴合并。
 

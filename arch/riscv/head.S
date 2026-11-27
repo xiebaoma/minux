@@ -23,9 +23,9 @@ _start:
     /* 3. a2/a3 传入内核镜像的物理地址范围，a0/a1 沿用固件参数。 */
     lla     a2, _kernel_start
     lla     a3, _kernel_end
-    call    start_kernel
+    call    riscv_boot_kernel
 
-    /* start_kernel 不应返回；万一返回了就停在这里 */
+    /* riscv_boot_kernel 不应返回；万一返回了就停在这里 */
 3:
     wfi
     j       3b

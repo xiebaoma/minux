@@ -2,7 +2,7 @@
 
 ## 启动与处理流程
 
-`start_kernel()` 首先调用 `trap_init()`，将 `stvec` 指向统一的汇编入口。RISC-V 发生 trap 时，硬件将返回地址、状态和原因写入 `sepc`、`sstatus`、`scause`、`stval` 等 CSR，然后跳转到该入口。汇编在任务的内核栈上建立 `pt_regs`，保存全部通用寄存器与这四个 CSR，再调用 C 处理函数。
+`riscv_boot_kernel()` 首先调用 `trap_init()`，将 `stvec` 指向统一的汇编入口。RISC-V 发生 trap 时，硬件将返回地址、状态和原因写入 `sepc`、`sstatus`、`scause`、`stval` 等 CSR，然后跳转到该入口。汇编在任务的内核栈上建立 `pt_regs`，保存全部通用寄存器与这四个 CSR，再调用 C 处理函数。
 
 未处理的内核异常和中断会打印 `scause` 编号、`sepc`、`stval` 与 `sstatus`，随后停机。定时器中断由 `scause=5` 分发，外部中断由 `scause=9` 分发。处理后从 `pt_regs` 恢复现场并执行 `sret`，回到原执行位置。处理器不会自动保存通用寄存器，这一步由汇编完成。
 
