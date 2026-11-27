@@ -3,6 +3,7 @@
 #include <minux/buddy.h>
 #include <minux/memblock.h>
 #include <minux/mm.h>
+#include <minux/paging.h>
 #include <minux/string.h>
 #include "test.h"
 
@@ -274,6 +275,114 @@ out:
 	check(buddy_free_pages() == before, "Sv39: reclaim both private roots and their pages");
 }
 
+static struct page *map_test_page(struct arch_pgd *pgd, uintptr_t va, u8 fill,
+				  unsigned int vm_flags)
+{
+	struct page *page = alloc_pages(0);
+
+	if (!page)
+		return NULL;
+	memset(page_address(page), fill, PAGE_SIZE);
+	if (!arch_pgd_map(pgd, va, page, vm_flags)) {
+		free_pages(page, 0);
+		return NULL;
+	}
+	return page;
+}
+
+static void test_unmap(void)
+{
+	const uintptr_t va0 = sv39_level_size(1) - PAGE_SIZE; /* L1#0, L0#0 末页 */
+	const uintptr_t va1 = sv39_level_size(1);             /* L1#0, L0#1 首页 */
+	const uintptr_t va2 = va1 + PAGE_SIZE;                /* L1#0, L0#1 次页 */
+	const uintptr_t va3 = sv39_level_size(2);             /* L1#1, L0#0 首页 */
+	const unsigned long sum = 1UL << 18;
+	const unsigned int rw = VM_READ | VM_WRITE;
+	u64 baseline = buddy_free_pages(), before_map, root_pa, boot_root;
+	struct arch_pgd *pgd = arch_pgd_alloc(), *child = NULL;
+	struct page *p0, *p1, *p2, *p3, *shared;
+	struct probe_result result;
+	unsigned long satp, status;
+	bool active;
+
+	check(pgd != NULL, "Sv39: allocate a user root for unmap tests");
+	if (!pgd)
+		return;
+	before_map = buddy_free_pages();
+	p0 = map_test_page(pgd, va0, 0x11, rw);
+	p1 = map_test_page(pgd, va1, 0x22, rw);
+	p2 = map_test_page(pgd, va2, 0x33, rw);
+	p3 = map_test_page(pgd, va3, 0x44, rw);
+	check(p0 && p1 && p2 && p3 && buddy_free_pages() == before_map - 9,
+	      "Sv39: map four pages across two L0 and two L1 child tables");
+	if (!p0 || !p1 || !p2 || !p3)
+		goto out;
+
+	arch_pgd_unmap_range(pgd, va0, va0);
+	arch_pgd_unmap_range(pgd, PAGE_SIZE, 3 * PAGE_SIZE);
+	check(buddy_free_pages() == before_map - 9 &&
+	      arch_pgd_user_page(pgd, va0, NULL) == p0,
+	      "Sv39: empty and unmapped ranges leave existing mappings intact");
+
+	asm volatile("csrr %0, satp" : "=r"(satp));
+	boot_root = (satp & ((1UL << 44) - 1)) << PAGE_SHIFT;
+	active = arch_virt_to_phys(pgd, &root_pa) && sv39_enable(root_pa);
+	check(active, "Sv39: activate user root before unmapping a live page");
+	if (!active)
+		goto out;
+
+	asm volatile("csrrs %0, sstatus, %1" : "=r"(status) : "r"(sum) : "memory");
+	result = sv39_probe_read(va1);
+	check(!result.cause && *(const volatile u8 *)va1 == 0x22,
+	      "Sv39: live page is readable before unmap");
+	arch_pgd_unmap_range(pgd, va1, va1 + PAGE_SIZE);
+	result = sv39_probe_read(va1);
+	check(!arch_pgd_user_page(pgd, va1, NULL) &&
+	      result.cause == 13 && result.address == va1,
+	      "Sv39: unmapped live page clears lookup and raises a load page fault");
+	result = sv39_probe_read(va2);
+	check(!result.cause && *(const volatile u8 *)va2 == 0x33 &&
+	      !sv39_probe_read(va0).cause && *(const volatile u8 *)va0 == 0x11,
+	      "Sv39: neighboring pages on both sides remain accessible after unmap");
+	asm volatile("csrw sstatus, %0" : : "r"(status) : "memory");
+	check(sv39_enable(boot_root), "Sv39: restore boot root after live unmap");
+	check(buddy_free_pages() == before_map - 8,
+	      "Sv39: partial L0 unmap returns only the data page");
+
+	arch_pgd_unmap_range(pgd, va2, va2 + PAGE_SIZE);
+	check(!arch_pgd_user_page(pgd, va2, NULL) &&
+	      buddy_free_pages() == before_map - 6,
+	      "Sv39: unmapping the last page in an L0 table reclaims the empty L0 table");
+
+	arch_pgd_unmap_range(pgd, va0, va3 + PAGE_SIZE);
+	check(!arch_pgd_user_page(pgd, va0, NULL) &&
+	      !arch_pgd_user_page(pgd, va3, NULL) &&
+	      buddy_free_pages() == before_map,
+	      "Sv39: spanning unmap reclaims all remaining data, L0 and L1 pages");
+
+	shared = map_test_page(pgd, va1, 0x77, rw);
+	child = arch_pgd_alloc();
+	check(shared && child && arch_pgd_fork(child, pgd) && page_ref_count(shared) == 2,
+	      "Sv39: share a COW page between two roots before unmap");
+	if (shared && child && page_ref_count(shared) == 2) {
+		arch_pgd_unmap_range(child, va1, va1 + PAGE_SIZE);
+		check(!arch_pgd_user_page(child, va1, NULL) &&
+		      arch_pgd_user_page(pgd, va1, NULL) == shared &&
+		      page_ref_count(shared) == 1 &&
+		      *(const u8 *)page_address(shared) == 0x77,
+		      "Sv39: unmapping a COW page drops only one reference and preserves the peer");
+		arch_pgd_unmap_range(pgd, va1, va1 + PAGE_SIZE);
+		check(!arch_pgd_user_page(pgd, va1, NULL),
+		      "Sv39: unmapping the last COW reference clears the mapping");
+	}
+out:
+	if (child)
+		arch_pgd_free(child);
+	arch_pgd_free(pgd);
+	check(buddy_free_pages() == baseline,
+	      "Sv39: unmap tests leave no leaked data or page-table pages");
+}
+
 void test_sv39(void)
 {
 	test_walk();
@@ -281,4 +390,5 @@ void test_sv39(void)
 	test_active_paging();
 	test_linear_mapping();
 	test_mm_paging();
+	test_unmap();
 }

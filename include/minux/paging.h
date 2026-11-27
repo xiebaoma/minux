@@ -23,6 +23,8 @@ void arch_pgd_activate(struct arch_pgd *pgd);
 /* 成功后接管一个 order-0 用户数据页并同步翻译，失败时保留原状。 */
 bool arch_pgd_map(struct arch_pgd *pgd, uintptr_t va, struct page *page,
 		  unsigned int vm_flags);
+/* 解除页对齐用户区间 [start, end) 内的映射，放下数据页引用，回收空子表并刷新翻译。 */
+void arch_pgd_unmap_range(struct arch_pgd *pgd, uintptr_t start, uintptr_t end);
 /* 将用户映射复制到空根表；失败时调用者销毁 dst，src 权限保持原状。 */
 bool arch_pgd_fork(struct arch_pgd *dst, struct arch_pgd *src);
 /* 安装已准备好的私有页，恢复写权限并刷新翻译。引用由调用者管理。 */

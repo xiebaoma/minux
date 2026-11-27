@@ -213,6 +213,70 @@ bool arch_pgd_map(struct arch_pgd *pgd, uintptr_t va, struct page *page,
 	return true;
 }
 
+static bool table_empty(const struct sv39_table *table)
+{
+	for (unsigned int i = 0; i < SV39_ENTRIES; i++) {
+		if (table->entries[i] & PTE_VALID)
+			return false;
+	}
+	return true;
+}
+
+static bool unmap_user_range(struct sv39_table *table, unsigned int level,
+			     uintptr_t start, uintptr_t end, bool *needs_flush)
+{
+	const u64 step = sv39_level_size(level);
+	bool changed = false;
+
+	for (uintptr_t va = start; va < end;) {
+		uintptr_t next = (va & ~(step - 1)) + step;
+		unsigned int idx = vpn_index(va, level);
+		u64 pte = table->entries[idx];
+
+		if (next > end)
+			next = end;
+		if (!(pte & PTE_VALID)) {
+			va = next;
+			continue;
+		}
+		if (!level) {
+			BUG_ON(!(pte & PTE_LEAF) || !(pte & PTE_USER));
+			table->entries[idx] = 0;
+			put_page(virt_to_page(arch_phys_to_virt(pte_phys(pte))));
+			*needs_flush = true;
+			changed = true;
+		} else {
+			struct sv39_table *child;
+
+			BUG_ON(pte & PTE_LEAF);
+			child = arch_phys_to_virt(pte_phys(pte));
+			if (unmap_user_range(child, level - 1, va, next, needs_flush) &&
+			    table_empty(child)) {
+				table->entries[idx] = 0;
+				/* 释放空子表前先刷新翻译，避免页表遍历缓存指向已归还页。 */
+				asm volatile("sfence.vma" : : : "memory");
+				*needs_flush = false;
+				free_pages(virt_to_page(child), 0);
+				changed = true;
+			}
+		}
+		va = next;
+	}
+	return changed;
+}
+
+void arch_pgd_unmap_range(struct arch_pgd *pgd, uintptr_t start, uintptr_t end)
+{
+	bool needs_flush = false;
+
+	if (start >= end)
+		return;
+	BUG_ON(!pgd || end > SV39_LOW_END || (start | end) % PAGE_SIZE);
+	unmap_user_range(&pgd->root, SV39_LEVELS - 1, start, end, &needs_flush);
+	if (needs_flush)
+		asm volatile("sfence.vma" : : : "memory");
+}
+
 //如果页表项原本可写，就清除写权限、加上 PTE_COW 标记；原本不可写的项保持不变。
 static u64 write_protect(u64 pte)
 {
