@@ -2,7 +2,7 @@
 
 Minux 是一个面向 RISC-V 64 的类 Unix 宏内核。它参照 Linux 的内核架构，使用 Linux RISC-V 系统调用 ABI 的一个子集运行自带的用户态程序。
 
-**v1.1 支持按架构选择构建配置。** 当前支持 RISC-V 64，通过 OpenSBI 在 QEMU `virt` 上以单 hart 启动。内核提供 Sv39 虚拟内存、抢占式调度、用户进程和 VFS，用户环境包含串口 TTY、最小 libc、shell、`echo` 和 `cat`。
+**v1.2 支持用户态匿名映射、堆分配与 errno。** 当前支持 RISC-V 64，通过 OpenSBI 在 QEMU `virt` 上以单 hart 启动。内核提供 Sv39 虚拟内存、私有匿名 `mmap`/`munmap`、抢占式调度、用户进程和 VFS，用户环境包含串口 TTY、带 `errno` 与堆分配器的 libc、shell、`echo` 和 `cat`。
 
 ## 设计目标
 
@@ -58,9 +58,9 @@ shell 通过绝对路径执行前台命令，支持一条连接两个命令的�
 
 ## 测试
 
-`make test` 先检查默认和显式架构选择、测试对象隔离及未知架构报错，再用同一个自测内核分别启动两张 ext2 测试盘。两轮都应报告 `537/537 passed, all OK`，并分别回收磁盘子程序的退出码 42 和 73。集成测试还会检查串口行编辑、Ctrl-D、前台进程、管道、文件重定向和错误恢复。命令返回 0 表示完整回归通过。
+`make test` 先检查默认和显式架构选择、测试对象隔离及未知架构报错，再用同一个自测内核分别启动两张 ext2 测试盘。两轮都应报告 `588/588 passed, all OK`，并分别回收磁盘子程序的退出码 42 和 73。集成测试还会检查串口行编辑、Ctrl-D、长命令行、前台进程、管道、文件重定向和错误恢复。命令返回 0 表示完整回归通过。
 
-RISC-V 配置从 `arch/riscv/tests/` 选择 Sv39 测试和四个汇编探针。内核依次执行启动自测、rootfs 自测和开中断后的运行时自测。v1.1 两轮的 22 组测试均与 v1.0 的执行顺序和检查数一致。[v1.0 基线](docs/BASELINE-v1.0.md)
+RISC-V 配置从 `arch/riscv/tests/` 选择 Sv39 测试和四个汇编探针。内核依次执行启动自测、rootfs 自测和开中断后的运行时自测。v1.2 在 v1.0 基线上扩充了 Sv39 解除映射、VMA 拆分、用户态 `mmap`/堆分配和长命令行检查，两轮均通过 22 组、588 项内核自测。[v1.0 基线](docs/BASELINE-v1.0.md)
 
 ## 目录结构
 
@@ -79,7 +79,7 @@ kernel/                核心子系统（printk、panic、任务与调度）
 lib/                   通用库函数（string、vsprintf）
 mm/                    启动内存表、buddy、slab、虚拟地址空间管理
 user/                  /init、hello、echo、cat、sh（启动归档）和 /disk/bin/child（ext2）
-  libc/                用户态头文件、RISC-V 启动入口和系统调用封装
+  libc/                用户态头文件、启动入口、系统调用封装、errno 和堆分配器
 tests/                 内核自测和 QEMU 串口集成测试
 docs/                  文件系统、内存管理、调度、FDT、异常与中断设计文档及路线图
 ```
