@@ -54,6 +54,8 @@ shell 通过绝对路径执行前台命令，支持一条连接两个命令的�
 | `make dump` | 生成反汇编文件 `build/minux.asm` |
 | `make clean` | 清理构建产物 |
 
+在 v1.1 开发分支上，`make run` 默认选择 RISC-V，等价于 `make ARCH=riscv run`。工具链、链接脚本、QEMU 机型和汇编入口由 [RISC-V 构建配置](arch/riscv/Makefile) 选择。可用 `CROSS_COMPILE` 覆盖交叉工具链前缀。正式镜像在 `build/`，自测镜像在 `build/test/`。
+
 ## 测试
 
 `make test` 用同一个自测内核分别启动两张 ext2 测试盘。两轮都应报告 `537/537 passed, all OK`，并分别回收磁盘子程序的退出码 42 和 73。集成测试还会检查串口行编辑、Ctrl-D、前台进程、管道、文件重定向和错误恢复。命令返回 0 表示两轮回归全部通过。
