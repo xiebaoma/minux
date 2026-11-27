@@ -99,7 +99,7 @@ USER_COMMANDS := hello echo cat sh
 ROOT_FILES := init $(addprefix bin/,$(USER_COMMANDS))
 ROOT_DIRS := bin tmp dev disk
 ifeq ($(TEST),1)
-ROOT_FILES += test/truncated test/pipes test/commands
+ROOT_FILES += test/truncated test/pipes test/commands test/mmap
 ROOT_DIRS += test
 endif
 
@@ -111,10 +111,11 @@ USER_LIBDIR := $(BUILD)/user/libc
 USER_CRT := $(BUILD)/$(ARCH_CRT_SRC:.S=.o)
 USER_SYSCALLS := $(BUILD)/$(ARCH_SYSCALLS_SRC:.S=.o)
 USER_OBJS := $(addprefix $(BUILD)/user/,$(addsuffix .o,$(USER_COMMANDS)))
+USER_TEST_LIBC_OBJS := $(BUILD)/tests/user/commands.o $(BUILD)/tests/user/mmap.o
 LIBC_OBJS := $(USER_SYSCALLS) $(USER_LIBDIR)/errno.o $(USER_LIBDIR)/sys.o \
              $(USER_LIBDIR)/string.o $(USER_LIBDIR)/malloc.o
 
-$(USER_OBJS) $(USER_CRT) $(LIBC_OBJS) $(BUILD)/tests/user/commands.o: CFLAGS := $(USER_CFLAGS)
+$(USER_OBJS) $(USER_CRT) $(LIBC_OBJS) $(USER_TEST_LIBC_OBJS): CFLAGS := $(USER_CFLAGS)
 $(USER_SYSCALLS) $(USER_LIBDIR)/sys.o: CPPFLAGS += -I$(ARCH_DIR)/include
 
 $(USER_LIBDIR)/libc.a: $(LIBC_OBJS)
@@ -125,7 +126,7 @@ $(ROOTDIR)/bin/%: $(BUILD)/user/%.o $(USER_CRT) $(USER_LIBDIR)/libc.a $(USER_LDS
 	@mkdir -p $(dir $@)
 	$(LD) $(USER_LDFLAGS) -o $@ $(USER_CRT) $< $(USER_LIBDIR)/libc.a
 
-$(ROOTDIR)/test/commands: $(BUILD)/tests/user/commands.o $(USER_CRT) $(USER_LIBDIR)/libc.a $(USER_LDSCRIPT)
+$(ROOTDIR)/test/commands $(ROOTDIR)/test/mmap: $(ROOTDIR)/test/%: $(BUILD)/tests/user/%.o $(USER_CRT) $(USER_LIBDIR)/libc.a $(USER_LDSCRIPT)
 	@mkdir -p $(dir $@)
 	$(LD) $(USER_LDFLAGS) -o $@ $(USER_CRT) $< $(USER_LIBDIR)/libc.a
 
@@ -168,5 +169,5 @@ clean:
 	rm -rf $(BUILD)
 
 -include $(OBJS:.o=.d) $(USER_INIT:.elf=.d) $(DISK_CHILD:.elf=.d) $(BUILD)/user/child-alt.d $(PIPE_TEST_OBJ:.o=.d)
--include $(USER_OBJS:.o=.d) $(USER_CRT:.o=.d) $(LIBC_OBJS:.o=.d) $(BUILD)/tests/user/commands.d
+-include $(USER_OBJS:.o=.d) $(USER_CRT:.o=.d) $(LIBC_OBJS:.o=.d) $(USER_TEST_LIBC_OBJS:.o=.d)
 .SECONDARY: $(USER_INIT:.elf=.o) $(DISK_CHILD:.elf=.o)

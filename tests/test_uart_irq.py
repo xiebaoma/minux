@@ -102,13 +102,18 @@ def main():
         send(b"/bin/missing\n")
         failed = wait_for(b"sh: cannot execute /bin/missing\r\n", prompt)
         prompt = wait_for(PROMPT, wait_for(b": exit 127\r\n", failed))
-        for command, error in [
-            (b"echo hello", b"sh: expected an absolute path"),
-            (b"/bin/echo " + b"x" * 118, b"sh: command line too long"),
-            (b"/bin/echo" + b" x" * 32, b"sh: too many arguments"),
-        ]:
-            send(command + b"\n")
-            prompt = wait_for(PROMPT, wait_for(error + b"\r\n", prompt))
+
+        long_text = b"long-" + b"x" * 260 + b"-end"
+        send(b"/bin/echo " + long_text + b"\n")
+        echo_pid, echo_start = wait_for_child_exec(b"/bin/echo", prompt, init[1])
+        long_out = wait_for(long_text + b"\r\n", echo_start)
+        prompt = wait_for(PROMPT, wait_for(b"user task " + echo_pid + b": exit 0\r\n", long_out))
+
+        send(b"echo hello\n")
+        prompt = wait_for(PROMPT, wait_for(b"sh: expected an absolute path\r\n", prompt))
+        send(b"/bin/echo" + b" x" * 32 + b"\n")
+        too_many = wait_for(b"sh: argument list too long\r\n", prompt)
+        prompt = wait_for(PROMPT, wait_for(b": exit 126\r\n", too_many))
         send(b"  \t\n")
         prompt = wait_for(PROMPT, prompt)
         send(b"  /bin/echo\tstill   here \n")

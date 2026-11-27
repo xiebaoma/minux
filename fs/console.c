@@ -5,7 +5,7 @@
 #include <minux/uaccess.h>
 #include <minux/wait.h>
 
-#define TTY_BUF_SIZE 256
+#define TTY_BUF_SIZE 512
 #define TTY_EOF 4 /* Ctrl-D 在队列中标记行结束，读时不交给用户。 */
 
 /* 单 hart：接收中断与 read 在关中断区间操作同一环。下标单调递增，

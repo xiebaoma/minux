@@ -650,7 +650,8 @@ wait_probe_mmap:
     li      a7, __NR_munmap
     ecall
     bnez    a0, .Lfail
-    j       .Ldone
+    la      s0, .Lmmap
+    j       .Lrun_test
 
 .Lmmap_cow_child:
     ld      t0, 0(s0)
@@ -700,6 +701,7 @@ wait_probe_fault:
 .Lmissing: .asciz "/no-such-file"
 .Lpipes: .asciz "/test/pipes"
 .Lcommands: .asciz "/test/commands"
+.Lmmap: .asciz "/test/mmap"
 .Lconsole: .asciz "/dev/console"
 .Lempty_stdin: .asciz "/tmp/empty-stdin"
 .Linit_path: .asciz "/init"

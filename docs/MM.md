@@ -50,6 +50,29 @@ RISC-V 的 `paging_init()` 从 memblock 分配并保留 Sv39 页表页，为内�
 
 用户地址空间顶部预留 8 页可读写栈，下方留一页保护区。入口 `sp` 按 16 字节对齐，依次指向 `argc`、以空指针结尾的 `argv` 和 `envp`，以及含 `AT_PAGESZ`、`AT_ENTRY`、`AT_NULL` 的辅助向量。路径上限为 127 字节，参数和环境各最多 32 项，字符串合计上限为 3072 字节（含各自的 NUL）。内核从旧地址空间复制输入，在独立页表内完成装载和建栈，再切换根表并释放旧映像。失败时调用者在原程序内收到负 errno。
 
+## v1.2 私有匿名映射与 VMA 拆分
+
+`struct mm_struct` 用 `mmap_limit` 约束动态映射上界。`elf_load()` 将其设为栈保护页底部（`stack_start - PAGE_SIZE`），使自动选址和地址提示都不会侵入用户栈及下方 1 页保护区；`mm_dup()` 复制该上界。
+
+`mm_mmap_anon()` 将请求长度向上按页取整，若调用者提供页对齐且落在 `[PAGE_SIZE, mmap_limit)` 内的空闲 `hint` 则优先采用，否则从 `mmap_limit` 自顶向下扫描 VMA 间隙并登记 `VM_ANON` 区间，物理页仍在首次访问时按需清零分配。`mm_munmap()` 处理完全覆盖删除、裁头、裁尾及中间挖空拆分四种情况；中间拆分先分配右侧新 VMA，内存不足时直接返回 `-ENOMEM` 而不改动原 VMA 与页表。页表层 `arch_pgd_unmap_range()` 清除区间内的用户叶项并放下物理页引用，当 Sv39 的 L0 或 L1 子表变空时先刷新翻译再立即归还空子表页。[VMA 管理](../mm/mm.c) · [Sv39 页表](../arch/riscv/sv39.c)
+
+系统调用保持 Linux RV64 编号（`__NR_munmap = 215`，`__NR_mmap = 222`）：
+
+- `mmap(addr, len, prot, flags, fd, offset)`：仅支持私有匿名映射，要求 `flags == (MAP_PRIVATE | MAP_ANONYMOUS)`、`fd == -1`、`offset == 0`、`len > 0`；`prot` 取 `PROT_READ`、`PROT_WRITE`、`PROT_EXEC` 的非空组合且可写须可读。`PROT_NONE`、只写、`MAP_SHARED`、`MAP_FIXED` 或未知位均返回 `-EINVAL`；长度溢出、虚拟区间不足或 VMA 分配失败返回 `-ENOMEM`。
+- `munmap(addr, len)`：要求 `addr` 按页对齐、`len > 0` 且区间落在用户地址空间内不溢出，否则返回 `-EINVAL`；`len` 按页向上取整，未映射空洞直接忽略，中间拆分内存不足返回 `-ENOMEM`。[UAPI 常量](../include/uapi/minux/mman.h) · [系统调用实现](../kernel/syscall.c)
+
+## v1.2 libc 错误码与用户态堆
+
+libc 在内部保留返回内核原始负错误码且不修改 `errno` 的 `__syscall0`..`__syscall6`，公开系统调用包装（`open`、`read`、`write`、`close`、`dup3`、`pipe`、`fork`、`execve`、`waitpid`、`mmap`、`munmap`）统一经 `__syscall_ret()` 处理：当内核返回值落在 `[-4095, -1]` 时设置 `errno = -ret` 并返回 `-1`（`mmap` 返回 `MAP_FAILED`），成功调用不修改 `errno`。[错误转换](../user/libc/errno.c) · [系统调用包装](../user/libc/sys.c)
+
+`malloc`、`free`、`realloc` 基于 `mmap`/`munmap` 构建，返回指针均按 16 字节对齐：
+
+- 不超过 8 KiB 的请求从 16 KiB 的匿名 `arena` 中切分，释放时与前后相邻空闲块合并；整块 `arena` 完全空闲时从链表摘除并调用 `munmap` 归还内核。
+- 超过 8 KiB 的大块按页向上取整独立 `mmap`，`free` 时直接 `munmap` 归还。
+- `malloc(0)` 返回 `NULL` 且不修改 `errno`；`free(NULL)` 为空操作；`realloc(NULL, size)` 等价于 `malloc(size)`，`realloc(ptr, 0)` 释放原块并返回 `NULL`。大小溢出或映射失败时设置 `errno = ENOMEM` 并返回 `NULL`；`realloc` 缩容与后继空闲块合并原地完成，迁移失败时保留原指针及原数据不变。[堆分配器](../user/libc/malloc.c)
+
+shell（`user/sh.c`）使用堆动态保存输入命令行、参数指针数组与重定向表，解除原 127 字节命令行长度限制；超出内核 `execve` 参数上限时由 `execve` 返回 `E2BIG` 并报错恢复。
+
 ## 验收
 
-运行 `make test` 启动 QEMU 自测内核。Sv39 和地址空间自测覆盖三级页表遍历、VMA 边界、分配失败回滚和私有页回收，并实际切换两张根表，验证同一个用户地址可以映射到不同的数据页，以及无映射和权限违规会触发缺页异常。buddy 自测核对启动后的空闲区间与各阶块数，并验证耗尽和归还后的统计。slab 自测覆盖档位选择、满页复用、大块分配和页回收。启动日志中的 `reserved` 包含内核、DTB、固件、启动页表及页描述符占用的 RAM 页。
+运行 `make test` 启动 QEMU 自测内核。Sv39 和地址空间自测覆盖三级页表遍历、动态解除映射与空子表回收、VMA 自动选址与拆分、分配失败回滚及写时复制。用户态测试 `/test/mmap` 与 `/test/commands` 覆盖 `errno` 转换、跨页匿名映射与 `fork` 写时复制、解除中间页后两侧读写与子进程 `SIGSEGV` 终止、反复堆分配扩容与页面全量回收，以及超过 127 字节的长命令行。buddy 自测核对启动后的空闲区间与各阶块数，并验证耗尽和归还后的统计。slab 自测覆盖档位选择、满页复用、大块分配和页回收。启动日志中的 `reserved` 包含内核、DTB、固件、启动页表及页描述符占用的 RAM 页。

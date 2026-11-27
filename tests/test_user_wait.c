@@ -156,7 +156,7 @@ void test_user_wait(void)
 		{ wait_probe_fork, 0, 0, 0,
 		  "fork: repeated user clone, store, kernel copy and wait preserve private stacks and PIDs" },
 		{ wait_probe_mmap, 0, 0, 0,
-		  "mmap: validate flags, COW across fork, split via munmap and fault on the unmapped page" },
+		  "mmap: raw/libc errno, COW across fork, VMA split SIGSEGV, heap churn and page reclaim" },
 		{ wait_probe_parent_first, 1, 0, 0,
 		  "wait4: parent blocks before child exits and wakes with its PID and status" },
 		{ wait_probe_child_first, 0, 3, 0,
@@ -176,7 +176,7 @@ void test_user_wait(void)
 
 		/* 写文件的探针使用独立挂载，卸载后仍可精确核对页数。 */
 		if (cases[i].entry == wait_probe_exec || cases[i].entry == wait_probe_files ||
-		    cases[i].entry == wait_probe_commands) {
+		    cases[i].entry == wait_probe_commands || cases[i].entry == wait_probe_mmap) {
 			int err = rootfs_init(boot_disk);
 			check(!err, "mount private ramfs for the user file probe");
 			if (err)
@@ -193,7 +193,7 @@ void test_user_wait(void)
 			}
 			task_idle_once();
 			/* 每一轮 wait4 都可能由 idle 回收子进程后才唤醒父进程。 */
-			for (unsigned int n = 0; n < FORK_PROBE_ROUNDS; n++) {
+			for (unsigned int n = 0; n < 32; n++) {
 				schedule();
 				if (observed.parent_done)
 					break;
